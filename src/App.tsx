@@ -581,11 +581,7 @@ export default function App() {
                 }`}
               >
                 <Sparkles className="w-3.5 h-3.5 text-sky-500" />
-                <span>
-                  Online
-                </span>
-                  )}
-                </span>
+                <span>Online</span>
               </button>
 
               <button

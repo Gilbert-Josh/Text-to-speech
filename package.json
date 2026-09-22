@@ -67,8 +67,8 @@
     ],
     "extraResources": [
       {
-        "from": "packaging/runtime/kokoro_tts.exe",
-        "to": "kokoro-runtime/kokoro_tts.exe"
+        "from": "packaging/runtime/kokoro_tts",
+        "to": "kokoro-runtime/kokoro_tts"
       },
       {
         "from": "packaging/runtime/model",

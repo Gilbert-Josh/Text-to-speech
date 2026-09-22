@@ -4,7 +4,7 @@ Base URL (local):
 
 `http://localhost:3000`
 
-The API is served by the Express backend. The OpenAI API key is never sent to clients.
+The API is served by the Express backend. TTS runs locally with Kokoro. No cloud TTS provider is required.
 
 ## Authentication
 
@@ -31,14 +31,14 @@ When `TTS_API_KEY` is not configured, the API remains open for local development
 
 ## GET /api/health
 
-Returns backend health and whether the server has an OpenAI key configured.
+Returns backend health and the active local TTS engine.
 
 Example:
 
 ```json
 {
   "status": "ok",
-  "hasApiKey": true
+  "ttsEngine": "kokoro-local"
 }
 ```
 

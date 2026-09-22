@@ -1,8 +1,8 @@
-import os
 import sys
 import tempfile
 from pathlib import Path
 
+import numpy as np
 import soundfile as sf
 from kokoro import KPipeline
 
@@ -50,16 +50,14 @@ for _, _, audio in pipeline(input_text, voice=voice_id):
 if not audio_parts:
     raise RuntimeError("Kokoro returned no audio.")
 
-output = Path(tempfile.mkstemp(suffix=".wav")[1])
+with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+    output = Path(tmp.name)
+
 try:
-    import numpy as np
     audio = np.concatenate(audio_parts)
     sf.write(output, audio, 24000, subtype="PCM_16")
     sys.stdout.write(str(output))
     sys.stdout.flush()
 except Exception:
-    try:
-        output.unlink(missing_ok=True)
-    except Exception:
-        pass
+    output.unlink(missing_ok=True)
     raise

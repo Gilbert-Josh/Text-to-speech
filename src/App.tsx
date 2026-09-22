@@ -25,6 +25,8 @@ import { AudioPlayerBar } from './components/AudioPlayerBar';
 import { HistoryPanel } from './components/HistoryPanel';
 import { PdfUploader } from './components/PdfUploader';
 import { processBase64Audio } from './utils/audio';
+import { encodeKokoroWavBase64ToMp3, finishMp3Encoding, downloadMp3 } from './utils/mp3';
+import * as lamejs from '@breezystack/lamejs';
 
 // Helper to chunk text into sentence-safe units so speech synthesis can be controlled, tracked, and cancelled smoothly
 function chunkTextForSpeech(text: string): string[] {
@@ -68,6 +70,11 @@ export default function App() {
   const [readingSectionTitle, setReadingSectionTitle] = useState<'full' | 'page' | null>(null);
   const [readingPageNumber, setReadingPageNumber] = useState<number | null>(null);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
+  const [isPdfConverting, setIsPdfConverting] = useState(false);
+  const [pdfConversionProgress, setPdfConversionProgress] = useState(0);
+  const [pdfConversionStatus, setPdfConversionStatus] = useState<string | null>(null);
+  const [pdfConversionComplete, setPdfConversionComplete] = useState(false);
+  const [pdfDownloadName, setPdfDownloadName] = useState<string | null>(null);
 
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -490,49 +497,79 @@ export default function App() {
     }
   };
 
-  const handleDocumentExtracted = (doc: PdfDocumentData) => {
-    setPdfDoc(doc);
-    // Populate textarea with first page text by default
-    const firstPageText = doc.pages[0]?.text || doc.fullText;
-    if (firstPageText) {
-      setText(firstPageText);
+  const handleConvertPdfToMp3 = async () => {
+    if (!pdfDoc?.fullText?.trim() || engine !== 'local' || isPdfConverting) return;
+
+    const outputName = pdfDoc.filename.replace(/\\.pdf$/i, '.mp3');
+    const chunks = chunkTextForSpeech(pdfDoc.fullText);
+    if (!chunks.length) {
+      setErrorMessage('No readable text was found in this PDF.');
+      return;
+    }
+
+    setIsPdfConverting(true);
+    setPdfConversionComplete(false);
+    setPdfDownloadName(outputName);
+    setPdfConversionProgress(1);
+    setPdfConversionStatus('Preparing PDF text...');
+
+    const encoder = new lamejs.Mp3Encoder(1, 24000, 128);
+    const mp3Frames: Int8Array[] = [];
+
+    try {
+      for (let index = 0; index < chunks.length; index += 1) {
+        const chunk = chunks[index];
+        const response = await fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: chunk,
+            voice: selectedVoiceId,
+            speakingStyle: selectedStyle,
+          }),
+        });
+
+        const data = await response.json();
+        if (!response.ok || data.error) {
+          throw new Error(data.error || `Speech generation failed at section ${index + 1}.`);
+        }
+        if (!data.audioBase64) {
+          throw new Error(`No audio returned for section ${index + 1}.`);
+        }
+
+        const frames = encodeKokoroWavBase64ToMp3(data.audioBase64, encoder);
+        mp3Frames.push(...frames);
+
+        const percent = Math.round(((index + 1) / chunks.length) * 94);
+        setPdfConversionProgress(percent);
+        setPdfConversionStatus(`Generating speech: section ${index + 1} of ${chunks.length}`);
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      }
+
+      setPdfConversionProgress(97);
+      setPdfConversionStatus('Finalising MP3...');
+      const finalFrame = finishMp3Encoding(encoder);
+      if (finalFrame) mp3Frames.push(finalFrame);
+
+      setPdfConversionProgress(100);
+      setPdfConversionStatus('Download ready.');
+      downloadMp3(mp3Frames, outputName);
+      setPdfConversionComplete(true);
+    } catch (error: any) {
+      console.error('PDF MP3 conversion failed:', error);
+      setErrorMessage(error?.message || 'Failed to convert the PDF to MP3.');
+    } finally {
+      setIsPdfConverting(false);
     }
   };
 
-  const handleSynthesizeSection = (sectionText: string, title: string, pageNumber?: number) => {
-    handleStopPlayback();
-    setText(sectionText);
-    const isFullDoc = !pageNumber || title.includes('Full Document');
-
-    if (isFullDoc && pdfDoc && pdfDoc.pages && pdfDoc.pages.length > 0) {
-      // Sequential document reading using the selected AI voice!
-      documentQueueRef.current = {
-        pages: pdfDoc.pages,
-        currentIndex: 0,
-        isReading: true,
-      };
-      playQueuePage(0);
-      return;
-    }
-
-    // Single page / specific section reading
-    documentQueueRef.current = {
-      pages: [],
-      currentIndex: 0,
-      isReading: false,
-    };
-    setReadingSectionTitle(isFullDoc ? 'full' : 'page');
-    setReadingPageNumber(pageNumber || null);
-
-    if (engine === 'browser') {
-      handleBrowserSynthesis(sectionText, selectedVoiceId, selectedStyle, {
-        sourceDoc: pdfDoc?.filename,
-        pageNumber,
-      });
-      return;
-    }
-
-    handleGenerate(sectionText, { sourceDoc: pdfDoc?.filename, pageNumber: pageNumber || 1 });
+  const handleDocumentExtracted = (doc: PdfDocumentData) => {
+    setPdfDoc(doc);
+    setPdfConversionComplete(false);
+    setPdfConversionProgress(0);
+    setPdfConversionStatus(null);
+    setPdfDownloadName(doc.filename.replace(/\\.pdf$/i, '.mp3'));
+    setText(doc.fullText);
   };
 
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
@@ -704,21 +741,21 @@ export default function App() {
               {/* PDF Uploader Component */}
               <PdfUploader
                 onDocumentExtracted={handleDocumentExtracted}
-                onSynthesizeSection={handleSynthesizeSection}
                 currentDocument={pdfDoc}
                 onClearDocument={() => {
                   handleStopPlayback();
                   setPdfDoc(null);
+                  setPdfConversionComplete(false);
+                  setPdfConversionProgress(0);
+                  setPdfConversionStatus(null);
                 }}
-                isPlaying={isPlaying}
-                isPaused={isPaused}
-                readingSectionTitle={readingSectionTitle}
-                readingPageNumber={readingPageNumber}
-                voiceName={selectedVoice.name}
+                onConvertToMp3={handleConvertPdfToMp3}
+                isConverting={isPdfConverting}
+                conversionProgress={pdfConversionProgress}
+                conversionStatus={pdfConversionStatus}
+                conversionComplete={pdfConversionComplete}
+                downloadName={pdfDownloadName}
                 engine={engine}
-                onStopReading={handleStopPlayback}
-                onPauseReading={handlePausePlayback}
-                onResumeReading={handleResumePlayback}
               />
             </div>
           ) : (

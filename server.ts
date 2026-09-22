@@ -58,6 +58,113 @@ const styleInstructions: Record<string, string> = {
   'news-anchor': 'Read in a clear broadcast-news style: ',
 };
 
+let persistentWorker: import('node:child_process').ChildProcessWithoutNullStreams | null = null;
+let persistentStdoutBuffer = '';
+let persistentWaiters: Array<{
+  resolve: (value: string) => void;
+  reject: (reason: Error) => void;
+}> = [];
+
+function resetPersistentWorker(error?: Error) {
+  const failure = error || new Error('Local Kokoro worker stopped unexpectedly.');
+  for (const waiter of persistentWaiters.splice(0)) {
+    waiter.reject(failure);
+  }
+  persistentStdoutBuffer = '';
+  persistentWorker = null;
+}
+
+function ensurePersistentWorker() {
+  if (persistentWorker && !persistentWorker.killed) {
+    return persistentWorker;
+  }
+
+  const { spawn } = require('node:child_process') as typeof import('node:child_process');
+  const pythonCommand = getKokoroPythonCommand();
+  const workerArgs = process.env.APP_RESOURCES_PATH
+    ? []
+    : [KOKORO_SCRIPT];
+
+  const workerCwd = process.env.APP_RESOURCES_PATH || APP_ROOT;
+
+  persistentWorker = spawn(pythonCommand, workerArgs, {
+    cwd: workerCwd,
+    windowsHide: true,
+    env: {
+      ...process.env,
+      KOKORO_PERSISTENT: '1',
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  persistentWorker.stdout.on('data', (chunk: Buffer) => {
+    persistentStdoutBuffer += chunk.toString('utf8');
+
+    let newlineIndex = persistentStdoutBuffer.indexOf('\n');
+    while (newlineIndex >= 0) {
+      const line = persistentStdoutBuffer.slice(0, newlineIndex).trim();
+      persistentStdoutBuffer = persistentStdoutBuffer.slice(newlineIndex + 1);
+
+      if (line) {
+        const waiter = persistentWaiters.shift();
+        if (!waiter) {
+          console.warn('Unexpected Kokoro worker output:', line);
+        } else {
+          try {
+            const response = JSON.parse(line);
+            if (response.ok && response.path) {
+              waiter.resolve(response.path);
+            } else {
+              waiter.reject(new Error(response.error || 'Kokoro TTS failed.'));
+            }
+          } catch {
+            waiter.reject(new Error('Kokoro worker returned invalid output.'));
+          }
+        }
+      }
+
+      newlineIndex = persistentStdoutBuffer.indexOf('\n');
+    }
+  });
+
+  persistentWorker.stderr.on('data', (chunk: Buffer) => {
+    console.error('[Kokoro]', chunk.toString('utf8').trim());
+  });
+
+  persistentWorker.once('error', (error) => {
+    resetPersistentWorker(error instanceof Error ? error : new Error(String(error)));
+  });
+
+  persistentWorker.once('close', (code) => {
+    resetPersistentWorker(new Error(`Kokoro worker exited with code ${code ?? 'unknown'}.`));
+  });
+
+  return persistentWorker;
+}
+
+let persistentQueue = Promise.resolve();
+
+function generateWithPersistentKokoro(request: {
+  text: string;
+  voice: string;
+  style: string;
+}): Promise<string> {
+  const job = persistentQueue.then(() => new Promise<string>((resolve, reject) => {
+    const worker = ensurePersistentWorker();
+    persistentWaiters.push({ resolve, reject });
+
+    try {
+      worker.stdin.write(JSON.stringify(request) + '\n');
+    } catch (error) {
+      persistentWaiters.pop();
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  }));
+
+  persistentQueue = job.then(() => undefined, () => undefined);
+  return job;
+}
+
 function getKokoroPythonCommand(): string {
   if (process.env.PYTHON_COMMAND) {
     return process.env.PYTHON_COMMAND;
@@ -118,71 +225,12 @@ app.post('/api/tts', requireApiKey, async (req, res) => {
         ? speakingStyle
         : 'natural';
 
-    const { spawn } = await import('node:child_process');
-
-    const pythonCommand = getKokoroPythonCommand();
-    console.log(`Starting local Kokoro TTS with ${pythonCommand}`, {
+    const outputPath = await generateWithPersistentKokoro({
+      text: inputText,
       voice: selectedVoice,
       style: selectedStyle,
-      characters: inputText.length,
     });
 
-    const workerArgs = process.env.APP_RESOURCES_PATH
-      ? [selectedVoice, selectedStyle]
-      : [KOKORO_SCRIPT, selectedVoice, selectedStyle];
-
-    // In a packaged Electron app, APP_ROOT points inside app.asar.
-    // Windows cannot use an asar path as a process working directory, which
-    // causes spawn() to report ENOENT even when kokoro_tts.exe exists.
-    // Use the real resources directory for the packaged worker instead.
-    const workerCwd = process.env.APP_RESOURCES_PATH || APP_ROOT;
-
-    const child = spawn(
-      pythonCommand,
-      workerArgs,
-      {
-        cwd: workerCwd,
-        windowsHide: true,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      }
-    );
-
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdoutChunks.push(chunk);
-    });
-
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderrChunks.push(chunk);
-    });
-
-    child.stdin.write(inputText);
-    child.stdin.end();
-
-    const exitCode: number = await new Promise((resolve, reject) => {
-      child.once('error', reject);
-      child.once('close', resolve);
-    });
-
-    if (exitCode !== 0) {
-      const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
-      console.error('Kokoro TTS worker failed:', stderr);
-      return res.status(500).json({
-        error:
-          stderr ||
-          'Local Kokoro TTS failed. Make sure Python 3.12, eSpeak NG, and Kokoro are installed.',
-      });
-    }
-
-    const outputPath = Buffer.concat(stdoutChunks).toString('utf8').trim();
-
-    if (!outputPath) {
-      return res.status(502).json({
-        error: 'Kokoro TTS returned no audio file.',
-      });
-    }
 
     const fs = await import('node:fs/promises');
     const audioBuffer = await fs.readFile(outputPath);

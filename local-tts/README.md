@@ -1,25 +1,43 @@
-# Local eSpeak NG prerequisite
+# Local Kokoro TTS
 
-Kokoro uses eSpeak NG for phonemization on Windows.
+The app uses Kokoro-82M for local speech synthesis.
 
-For Windows, install the official eSpeak NG MSI from the upstream release page:
+## Windows development prerequisite
 
-https://github.com/espeak-ng/espeak-ng/releases
-
-The current upstream 1.52.0 release provides the Windows installer:
+Kokoro uses eSpeak NG for phonemization. Install the official Windows MSI:
 
 https://github.com/espeak-ng/espeak-ng/releases/download/1.52.0/espeak-ng.msi
 
-After installation, open a new terminal and verify:
+The application worker automatically adds the standard installation directory to PATH.
+
+## Test the worker
+
+From the project root, activate the dedicated Python 3.12 environment and pipe text into the worker:
 
 ```powershell
-where.exe espeak-ng
+"Hello, this is a local Kokoro test." | .\.kokoro-venv\Scripts\python.exe local-tts\kokoro_tts.py alloy natural
 ```
 
-Then test Kokoro again:
+The worker prints the generated WAV path to stdout.
+
+## Build the Windows installer
+
+The repository includes a PowerShell build script that packages:
+
+- React + Express application
+- Electron desktop shell
+- standalone Kokoro worker
+- Kokoro model and voice files
+- eSpeak NG
+
+Run from the project root:
 
 ```powershell
-python local-tts\kokoro_tts.py alloy natural
+powershell -ExecutionPolicy Bypass -File .\scripts\build-windows-installer.ps1
 ```
 
-Note: the MSI is a Windows system prerequisite, so it should be installed on the machine rather than committed into this repository.
+The installer is created at:
+
+`release\Text-to-Speech-Studio-Setup.exe`
+
+The build machine needs the development prerequisites installed first. End users do not need Python, Node.js, Kokoro, or eSpeak NG installed separately.

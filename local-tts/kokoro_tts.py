@@ -1,6 +1,15 @@
+import contextlib
+import os
 import sys
 import tempfile
 from pathlib import Path
+
+# eSpeak NG is installed in the standard Windows location by the official MSI.
+# Add it to this worker's PATH so the app does not depend on the terminal's PATH.
+if sys.platform == "win32":
+    espeak_path = r"C:\Program Files\eSpeak NG"
+    if os.path.isdir(espeak_path):
+        os.environ["PATH"] = espeak_path + os.pathsep + os.environ.get("PATH", "")
 
 import numpy as np
 import soundfile as sf
@@ -41,11 +50,13 @@ voice_id = VOICE_MAP.get(voice.lower(), "af_heart")
 prefix = STYLE_PREFIXES.get(style, "")
 input_text = f"{prefix}{text.strip()}"
 
-pipeline = KPipeline(lang_code="a")
-
+# Keep stdout machine-readable: the Node server expects only the WAV path there.
+# Kokoro/dependency warnings are redirected to stderr so they cannot corrupt it.
 audio_parts = []
-for _, _, audio in pipeline(input_text, voice=voice_id):
-    audio_parts.append(audio)
+with contextlib.redirect_stdout(sys.stderr):
+    pipeline = KPipeline(lang_code="a")
+    for _, _, audio in pipeline(input_text, voice=voice_id):
+        audio_parts.append(audio)
 
 if not audio_parts:
     raise RuntimeError("Kokoro returned no audio.")

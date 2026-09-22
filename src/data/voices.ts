@@ -1,6 +1,6 @@
 import { VoiceOption, SpeakingStyle } from '../types';
 
-export const OPENAI_VOICES: VoiceOption[] = [
+export const KOKORO_VOICES: VoiceOption[] = [
   {
     id: 'alloy',
     name: 'Alloy',
@@ -93,7 +93,7 @@ export const OPENAI_VOICES: VoiceOption[] = [
   },
 ];
 
-export const GEMINI_VOICES = OPENAI_VOICES;
+export const KOKORO_VOICES = KOKORO_VOICES;
 
 export const SPEAKING_STYLES: { id: SpeakingStyle; label: string; promptModifier: string; icon: string }[] = [
   { id: 'natural', label: 'Natural & Balanced', promptModifier: '', icon: 'Mic' },

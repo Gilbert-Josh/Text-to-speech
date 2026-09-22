@@ -82,7 +82,7 @@
     "win": {
       "target": [
         {
-          "target": "nsis",
+          "target": "nsis-web",
           "arch": [
             "x64"
           ]
@@ -90,7 +90,7 @@
       ],
       "executableName": "Text-to-Speech-Studio"
     },
-    "nsis": {
+    "nsisWeb": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,

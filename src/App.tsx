@@ -1018,7 +1018,7 @@ export default function App() {
 
       {/* Subtle Footer */}
       <footer className="border-t border-slate-200 dark:border-slate-800 py-4 text-center text-xs text-slate-400">
-        Text to Speech Studio • High fidelity audio synthesis powered by Gemini & Web Audio API
+        Text to Speech Studio • High fidelity audio synthesis powered by kokoro and peanuts
       </footer>
     </div>
   );

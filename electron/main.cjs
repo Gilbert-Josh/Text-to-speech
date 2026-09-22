@@ -7,11 +7,14 @@ const resourcesPath = process.resourcesPath;
 
 process.env.NODE_ENV = 'production';
 process.env.APP_ROOT = appRoot;
-process.env.APP_RESOURCES_PATH = resourcesPath;
-process.env.KOKORO_HF_HOME = path.join(resourcesPath, 'kokoro-runtime', 'hf');
-process.env.KOKORO_ESPEAK_PATH = path.join(resourcesPath, 'kokoro-runtime', 'espeak-ng');
-process.env.HF_HUB_OFFLINE = '1';
-process.env.HF_DATASETS_OFFLINE = '1';
+
+if (app.isPackaged) {
+  process.env.APP_RESOURCES_PATH = resourcesPath;
+  process.env.KOKORO_HF_HOME = path.join(resourcesPath, 'kokoro-runtime', 'hf');
+  process.env.KOKORO_ESPEAK_PATH = path.join(resourcesPath, 'kokoro-runtime', 'espeak-ng');
+  process.env.HF_HUB_OFFLINE = '1';
+  process.env.HF_DATASETS_OFFLINE = '1';
+}
 
 let mainWindow;
 

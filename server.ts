@@ -3,7 +3,6 @@ import path from 'path';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import { PDFParse } from 'pdf-parse';
-import OpenAI from 'openai';
 import { GoogleGenAI } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 
@@ -17,13 +16,12 @@ app.use(express.json({ limit: '10mb' }));
 function requireApiKey(req: express.Request, res: express.Response, next: express.NextFunction) {
   const configuredKey = process.env.TTS_API_KEY;
 
-  // If no public API key is configured, keep local development behavior unchanged.
   if (!configuredKey) {
     return next();
   }
 
   const authorization = req.header('authorization') || '';
-  const bearerMatch = authorization.match(/^Bearer\\s+(.+)$/i);
+  const bearerMatch = authorization.match(/^Bearer\s+(.+)$/i);
   const suppliedKey = bearerMatch?.[1] || req.header('x-api-key');
 
   if (!suppliedKey || suppliedKey !== configuredKey) {
@@ -35,15 +33,12 @@ function requireApiKey(req: express.Request, res: express.Response, next: expres
   next();
 }
 
-// Multer memory storage for PDF processing (up to 100MB)
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 100 * 1024 * 1024 },
 });
 
-// OpenAI client for text-to-speech only.
-// The API key is read server-side and is never exposed to the React frontend.
-// Local Kokoro TTS is invoked through the Python worker in local-tts/kokoro_tts.py.
+// Local Kokoro TTS is invoked through the Python worker.
 // No paid TTS API key is required for speech generation.
 const KOKORO_SCRIPT = path.join(process.cwd(), 'local-tts', 'kokoro_tts.py');
 
@@ -57,6 +52,19 @@ const styleInstructions: Record<string, string> = {
   whisper: 'Speak softly and intimately: ',
   'news-anchor': 'Read in a clear broadcast-news style: ',
 };
+
+function getKokoroPythonCommand(): string {
+  if (process.env.PYTHON_COMMAND) {
+    return process.env.PYTHON_COMMAND;
+  }
+
+  const candidates =
+    process.platform === 'win32'
+      ? [path.join(process.cwd(), '.kokoro-venv', 'Scripts', 'python.exe')]
+      : [path.join(process.cwd(), '.kokoro-venv', 'bin', 'python')];
+
+  return candidates[0];
+}
 
 // Gemini remains available only for the existing scanned-PDF OCR fallback.
 let aiClient: GoogleGenAI | null = null;
@@ -78,15 +86,15 @@ function getGenAI(): GoogleGenAI {
   return aiClient;
 }
 
-// Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    hasApiKey: Boolean(process.env.OPENAI_API_KEY),
+    ttsEngine: 'kokoro-local',
+    kokoroPython: getKokoroPythonCommand(),
+    hasGeminiOcrKey: Boolean(process.env.GEMINI_API_KEY),
   });
 });
 
-// Text-to-Speech API endpoint
 app.post('/api/tts', requireApiKey, async (req, res) => {
   try {
     const { text, voice = 'alloy', speakingStyle = 'natural' } = req.body;
@@ -127,7 +135,12 @@ app.post('/api/tts', requireApiKey, async (req, res) => {
 
     const { spawn } = await import('node:child_process');
 
-    const pythonCommand = process.env.PYTHON_COMMAND || 'python';
+    const pythonCommand = getKokoroPythonCommand();
+    console.log(`Starting local Kokoro TTS with ${pythonCommand}`, {
+      voice: selectedVoice,
+      style: selectedStyle,
+      characters: inputText.length,
+    });
 
     const child = spawn(
       pythonCommand,
@@ -164,7 +177,7 @@ app.post('/api/tts', requireApiKey, async (req, res) => {
       return res.status(500).json({
         error:
           stderr ||
-          'Local Kokoro TTS failed. Make sure the Python environment and Kokoro dependencies are installed.',
+          'Local Kokoro TTS failed. Make sure Python 3.12, eSpeak NG, and Kokoro are installed.',
       });
     }
 
@@ -186,8 +199,6 @@ app.post('/api/tts', requireApiKey, async (req, res) => {
         error: 'Kokoro TTS returned an empty audio file.',
       });
     }
-
-    const instructions = styleInstructions[selectedStyle];
 
     return res.json({
       audioBase64: audioBuffer.toString('base64'),
@@ -233,7 +244,6 @@ app.post('/api/pdf-extract', (req, res, next) => {
     let numPages = 1;
 
     try {
-      // 1. Fast local extraction via PDFParse
       const parser = new PDFParse({ data: req.file.buffer });
       const textResult = await parser.getText();
 
@@ -263,7 +273,6 @@ app.post('/api/pdf-extract', (req, res, next) => {
       console.warn('PDFParse local extraction warning:', parseError);
     }
 
-    // 2. If the PDF is scanned or extracted very little text, attempt Gemini OCR extraction
     if (fullText.trim().length < 50 && process.env.GEMINI_API_KEY) {
       try {
         const ai = getGenAI();
@@ -323,7 +332,6 @@ app.post('/api/pdf-extract', (req, res, next) => {
   }
 });
 
-// Global JSON error handler for /api routes to prevent HTML error responses
 app.use('/api', (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('API error middleware caught:', err);
   const status = typeof err.status === 'number' ? err.status : (err.code === 'LIMIT_FILE_SIZE' ? 413 : 500);
@@ -332,7 +340,6 @@ app.use('/api', (err: any, req: express.Request, res: express.Response, next: ex
   });
 });
 
-// Vite middleware / SPA fallback
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

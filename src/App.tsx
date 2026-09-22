@@ -57,9 +57,9 @@ export default function App() {
   );
   const [inputMode, setInputMode] = useState<'text' | 'pdf'>('text');
   const [pdfDoc, setPdfDoc] = useState<PdfDocumentData | null>(null);
-  const [selectedVoiceId, setSelectedVoiceId] = useState<string>('Kore');
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string>('alloy');
   const [selectedStyle, setSelectedStyle] = useState<SpeakingStyle>('natural');
-  const [engine, setEngine] = useState<'gemini' | 'browser'>('gemini');
+  const [engine, setEngine] = useState<'local' | 'browser'>('local');
   const [quotaCooldownSeconds, setQuotaCooldownSeconds] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -105,15 +105,14 @@ export default function App() {
     fetch('/api/health')
       .then((res) => res.json())
       .then((data) => {
-        setServerHealth({ hasApiKey: Boolean(data.hasApiKey) });
-        if (!data.hasApiKey) {
-          // If no API key configured, automatically set engine to browser as initial default
-          setEngine('browser');
-        }
+        setServerHealth({ hasApiKey: Boolean(data.hasGeminiOcrKey) });
+        // Kokoro is the primary local TTS engine. Gemini is only used for scanned-PDF OCR.
+        setEngine('local');
       })
       .catch(() => {
         setServerHealth({ hasApiKey: false });
-        setEngine('browser');
+        // Keep local Kokoro as the default even if the health request is unavailable.
+        setEngine('local');
       });
 
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -141,7 +140,7 @@ export default function App() {
     setIsLoading(true);
 
     // If Gemini is cooling down due to rate limit, seamlessly synthesize with Browser Speech
-    if (engine === 'gemini' && quotaCooldownSeconds !== null && quotaCooldownSeconds > 0) {
+    if (engine === 'local' && quotaCooldownSeconds !== null && quotaCooldownSeconds > 0) {
       setErrorMessage(
         `Gemini rate limit cooldown in progress (${quotaCooldownSeconds}s left). Reading with Browser Speech engine.`
       );
@@ -196,7 +195,7 @@ export default function App() {
         text: targetText,
         voice: selectedVoiceId,
         style: selectedStyle,
-        engine: 'gemini',
+        engine: 'local',
         audioUrl: blobUrl,
         createdAt: Date.now(),
         sourceDoc: meta?.sourceDoc,
@@ -668,10 +667,10 @@ export default function App() {
                   if (quotaCooldownSeconds && quotaCooldownSeconds > 0) {
                     setErrorMessage(`Gemini rate limit cooldown: ${quotaCooldownSeconds}s remaining.`);
                   }
-                  setEngine('gemini');
+                  setEngine('local');
                 }}
                 className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-all ${
-                  engine === 'gemini'
+                  engine === 'local'
                     ? 'bg-white dark:bg-slate-700 text-sky-600 dark:text-sky-300 shadow-2xs font-semibold'
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
                 }`}
@@ -936,7 +935,7 @@ export default function App() {
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               <span>
-                Engine: {engine === 'gemini' ? 'Gemini 3.1 Flash TTS (24 kHz)' : 'Local Speech Engine'}
+                Engine: {engine === 'local' ? 'Kokoro Local TTS (24 kHz)' : 'Browser Speech'}
               </span>
             </div>
 

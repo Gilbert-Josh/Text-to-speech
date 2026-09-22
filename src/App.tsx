@@ -482,8 +482,11 @@ export default function App() {
   const handlePreviewSample = (phrase: string, voiceId: string) => {
     setSelectedVoiceId(voiceId);
     setText(phrase);
-    if (synthRef.current && engine === 'browser') {
+
+    if (engine === 'browser') {
       handleBrowserSynthesis(phrase, voiceId, selectedStyle);
+    } else {
+      handleGenerate(phrase);
     }
   };
 

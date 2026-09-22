@@ -29,7 +29,7 @@ import { encodeKokoroWavBase64ToMp3, finishMp3Encoding, downloadMp3 } from './ut
 import * as lamejs from '@breezystack/lamejs';
 
 // Helper to chunk text into sentence-safe units so speech synthesis can be controlled, tracked, and cancelled smoothly
-function chunkTextForSpeech(text: string): string[] {
+function chunkTextForSpeech(text: string, maxChars = 220): string[] {
   const clean = text.replace(/\r\n/g, '\n').trim();
   if (!clean) return [];
 
@@ -41,7 +41,7 @@ function chunkTextForSpeech(text: string): string[] {
   for (const s of sentences) {
     const trimmed = s.trim();
     if (!trimmed) continue;
-    if ((currentChunk + ' ' + trimmed).length < 220) {
+    if ((currentChunk + ' ' + trimmed).length <= maxChars) {
       currentChunk = currentChunk ? `${currentChunk} ${trimmed}` : trimmed;
     } else {
       if (currentChunk) chunks.push(currentChunk);
@@ -501,7 +501,7 @@ export default function App() {
     if (!pdfDoc?.fullText?.trim() || engine !== 'local' || isPdfConverting) return;
 
     const outputName = pdfDoc.filename.replace(/\.pdf$/i, '.mp3');
-    const chunks = chunkTextForSpeech(pdfDoc.fullText);
+    const chunks = chunkTextForSpeech(pdfDoc.fullText, 900);
     if (!chunks.length) {
       setErrorMessage('No readable text was found in this PDF.');
       return;

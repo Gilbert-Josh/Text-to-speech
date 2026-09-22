@@ -11,13 +11,11 @@ if sys.platform == "win32":
     if os.path.isdir(espeak_path):
         os.environ["PATH"] = espeak_path + os.pathsep + os.environ.get("PATH", "")
 
-if os.environ.get("KOKORO_HF_HOME"):
-    os.environ["HF_HOME"] = os.environ["KOKORO_HF_HOME"]
-    os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import numpy as np
 import soundfile as sf
 from kokoro import KPipeline
+from kokoro.model import KModel
 
 VOICE_MAP = {
     "alloy": "af_heart",

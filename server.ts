@@ -85,7 +85,9 @@ function ensurePersistentWorker() {
     ? []
     : [KOKORO_SCRIPT];
 
-  const workerCwd = process.env.APP_RESOURCES_PATH || APP_ROOT;
+  const workerCwd = process.env.APP_RESOURCES_PATH
+    ? path.dirname(getKokoroPythonCommand())
+    : APP_ROOT;
 
   persistentWorker = spawn(pythonCommand, workerArgs, {
     cwd: workerCwd,
@@ -171,7 +173,7 @@ function getKokoroPythonCommand(): string {
   }
 
   if (process.env.APP_RESOURCES_PATH) {
-    return path.join(APP_RESOURCES, 'kokoro-runtime', 'kokoro_tts.exe');
+    return path.join(APP_RESOURCES, 'kokoro-runtime', 'kokoro_tts', 'kokoro_tts.exe');
   }
 
   return process.platform === 'win32'

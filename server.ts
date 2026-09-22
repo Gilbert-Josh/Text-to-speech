@@ -131,11 +131,17 @@ app.post('/api/tts', requireApiKey, async (req, res) => {
       ? [selectedVoice, selectedStyle]
       : [KOKORO_SCRIPT, selectedVoice, selectedStyle];
 
+    // In a packaged Electron app, APP_ROOT points inside app.asar.
+    // Windows cannot use an asar path as a process working directory, which
+    // causes spawn() to report ENOENT even when kokoro_tts.exe exists.
+    // Use the real resources directory for the packaged worker instead.
+    const workerCwd = process.env.APP_RESOURCES_PATH || APP_ROOT;
+
     const child = spawn(
       pythonCommand,
       workerArgs,
       {
-        cwd: APP_ROOT,
+        cwd: workerCwd,
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
       }

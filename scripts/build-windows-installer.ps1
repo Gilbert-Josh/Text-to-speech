@@ -96,6 +96,14 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
 
 Copy-Item -Force (Join-Path $WorkerDist "kokoro_tts.exe") (Join-Path $RuntimeRoot "kokoro_tts.exe")
 
+$PackagedWorker = Join-Path $RuntimeRoot "kokoro_tts.exe"
+if (!(Test-Path $PackagedWorker)) {
+  throw "Kokoro worker was not created at $PackagedWorker."
+}
+if ((Get-Item $PackagedWorker).Length -lt 1000000) {
+  throw "Kokoro worker appears invalid or incomplete: $PackagedWorker"
+}
+
 Write-Host "Bundling eSpeak NG..." -ForegroundColor Cyan
 Copy-Item -Recurse -Force $EspeakSource (Join-Path $RuntimeRoot "espeak-ng")
 
@@ -108,6 +116,13 @@ try {
   Write-Host "Building Text-to-Speech-Studio-Setup.exe..." -ForegroundColor Cyan
   npx electron-builder --win nsis
   if ($LASTEXITCODE -ne 0) { throw "Electron installer build failed." }
+
+  $UnpackedWorker = Join-Path $ProjectRoot "release\win-unpacked\resources\kokoro-runtime\kokoro_tts.exe"
+  if (!(Test-Path $UnpackedWorker)) {
+    throw "Electron packaging did not include the Kokoro worker at $UnpackedWorker."
+  }
+
+  Write-Host "Verified packaged Kokoro worker: $UnpackedWorker" -ForegroundColor Green
 }
 finally {
   Pop-Location

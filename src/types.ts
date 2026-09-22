@@ -22,7 +22,7 @@ export interface TTSRequest {
   text: string;
   voice: string;
   speakingStyle?: SpeakingStyle;
-  engine?: 'gemini' | 'browser';
+  engine?: 'local' | 'browser';
 }
 
 export interface TTSResponse {
@@ -30,7 +30,7 @@ export interface TTSResponse {
   mimeType?: string;
   error?: string;
   durationEstimate?: number;
-  engine: 'gemini' | 'browser';
+  engine: 'local' | 'browser';
 }
 
 export interface GeneratedClip {
@@ -38,7 +38,7 @@ export interface GeneratedClip {
   text: string;
   voice: string;
   style: SpeakingStyle;
-  engine: 'gemini' | 'browser';
+  engine: 'local' | 'browser';
   audioUrl: string;
   createdAt: number;
   duration?: number;

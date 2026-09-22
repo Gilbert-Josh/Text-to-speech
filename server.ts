@@ -43,17 +43,20 @@ const upload = multer({
 
 // OpenAI client for text-to-speech only.
 // The API key is read server-side and is never exposed to the React frontend.
-let openaiClient: OpenAI | null = null;
-function getOpenAI(): OpenAI {
-  if (!openaiClient) {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error('OPENAI_API_KEY environment variable is missing.');
-    }
-    openaiClient = new OpenAI({ apiKey });
-  }
-  return openaiClient;
-}
+// Local Kokoro TTS is invoked through the Python worker in local-tts/kokoro_tts.py.
+// No paid TTS API key is required for speech generation.
+const KOKORO_SCRIPT = path.join(process.cwd(), 'local-tts', 'kokoro_tts.py');
+
+const styleInstructions: Record<string, string> = {
+  natural: '',
+  cheerfully: 'Speak cheerfully with warm enthusiasm: ',
+  energetic: 'Speak with high energy and enthusiasm: ',
+  storyteller: 'Narrate dramatically like an audiobook storyteller: ',
+  authoritative: 'Deliver with a confident, authoritative tone: ',
+  calm: 'Speak calmly and gently: ',
+  whisper: 'Speak softly and intimately: ',
+  'news-anchor': 'Read in a clear broadcast-news style: ',
+};
 
 // Gemini remains available only for the existing scanned-PDF OCR fallback.
 let aiClient: GoogleGenAI | null = null;
@@ -117,71 +120,89 @@ app.post('/api/tts', requireApiKey, async (req, res) => {
       ? String(voice).toLowerCase()
       : 'alloy';
 
-    const styleInstructions: Record<string, string> = {
-      natural: '',
-      cheerfully: 'Speak cheerfully with warm enthusiasm.',
-      energetic: 'Speak with high energy and enthusiasm.',
-      storyteller: 'Narrate dramatically like an audiobook storyteller.',
-      authoritative: 'Deliver with a confident, authoritative tone.',
-      calm: 'Speak calmly and gently.',
-      whisper: 'Speak softly and intimately.',
-      'news-anchor': 'Read in a clear broadcast-news style.',
-    };
-
     const selectedStyle =
       typeof speakingStyle === 'string' && speakingStyle in styleInstructions
         ? speakingStyle
         : 'natural';
 
-    const instructions = styleInstructions[selectedStyle];
-    const openai = getOpenAI();
+    const { spawn } = await import('node:child_process');
 
-    const response = await openai.audio.speech.create({
-      model: 'gpt-4o-mini-tts',
-      voice: selectedVoice,
-      input: inputText,
-      ...(instructions ? { instructions } : {}),
-      response_format: 'wav',
+    const pythonCommand = process.env.PYTHON_COMMAND || 'python';
+
+    const child = spawn(
+      pythonCommand,
+      [KOKORO_SCRIPT, selectedVoice, selectedStyle],
+      {
+        cwd: process.cwd(),
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }
+    );
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdoutChunks.push(chunk);
     });
 
-    const audioBuffer = Buffer.from(await response.arrayBuffer());
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderrChunks.push(chunk);
+    });
+
+    child.stdin.write(inputText);
+    child.stdin.end();
+
+    const exitCode: number = await new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', resolve);
+    });
+
+    if (exitCode !== 0) {
+      const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
+      console.error('Kokoro TTS worker failed:', stderr);
+      return res.status(500).json({
+        error:
+          stderr ||
+          'Local Kokoro TTS failed. Make sure the Python environment and Kokoro dependencies are installed.',
+      });
+    }
+
+    const outputPath = Buffer.concat(stdoutChunks).toString('utf8').trim();
+
+    if (!outputPath) {
+      return res.status(502).json({
+        error: 'Kokoro TTS returned no audio file.',
+      });
+    }
+
+    const fs = await import('node:fs/promises');
+    const audioBuffer = await fs.readFile(outputPath);
+
+    await fs.unlink(outputPath).catch(() => undefined);
 
     if (!audioBuffer.length) {
       return res.status(502).json({
-        error: 'No audio data was returned by the speech model.',
+        error: 'Kokoro TTS returned an empty audio file.',
       });
     }
+
+    const instructions = styleInstructions[selectedStyle];
 
     return res.json({
       audioBase64: audioBuffer.toString('base64'),
       mimeType: 'audio/wav',
-      engine: 'openai',
+      engine: 'kokoro-local',
       voice: selectedVoice,
       style: selectedStyle,
     });
   } catch (error: any) {
-    const rawMsg = error?.message || '';
-
-    console.error('Error generating OpenAI speech:', error);
-
-    if (error?.status === 401 || error?.code === 'invalid_api_key') {
-      return res.status(500).json({
-        error: 'OpenAI API authentication failed. Check OPENAI_API_KEY.',
-        isApiKeyMissing: false,
-      });
-    }
-
-    if (error?.status === 429) {
-      return res.status(429).json({
-        error: 'OpenAI rate limit or quota reached. Please wait and try again.',
-        isQuotaExhausted: true,
-        fallbackAvailable: true,
-      });
-    }
+    console.error('Error generating local Kokoro speech:', error);
 
     return res.status(500).json({
-      error: rawMsg || 'Failed to generate speech',
-      isApiKeyMissing: rawMsg.includes('OPENAI_API_KEY'),
+      error:
+        error?.message ||
+        'Failed to generate speech using local Kokoro TTS.',
     });
   }
 });

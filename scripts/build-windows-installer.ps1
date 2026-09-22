@@ -87,6 +87,9 @@ $PyInstallerArgs = @(
   "--collect-all", "en_core_web_sm",
   "--collect-all", "transformers",
   "--collect-all", "huggingface_hub",
+  "--collect-all", "language_tags",
+  "--collect-all", "csvw",
+  "--collect-all", "segments",
   "--collect-all", "soundfile",
   "--collect-all", "torch",
   (Join-Path $ProjectRoot "local-tts\kokoro_tts.py")

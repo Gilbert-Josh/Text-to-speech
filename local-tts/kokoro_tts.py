@@ -44,60 +44,33 @@ STYLE_PREFIXES = {
 
 
 def select_device():
-    """Select the fastest stable PyTorch device available on this machine."""
-    import time
+    """Select a stable PyTorch device for Kokoro."""
     import torch
 
     requested = os.environ.get("KOKORO_DEVICE", "auto").strip().lower()
+
     if requested == "cpu":
         return torch.device("cpu"), "cpu", "forced CPU"
 
     cuda_available = bool(torch.cuda.is_available())
+
     if requested == "cuda":
         if not cuda_available:
-            print("CUDA was requested but PyTorch reports no CUDA device; falling back to CPU.", file=sys.stderr, flush=True)
+            print(
+                "CUDA was requested but PyTorch reports no CUDA device; falling back to CPU.",
+                file=sys.stderr,
+                flush=True,
+            )
             return torch.device("cpu"), "cpu", "CUDA unavailable"
 
         gpu_name = torch.cuda.get_device_name(0)
         return torch.device("cuda"), "cuda", f"{gpu_name}; forced CUDA"
 
-    if not cuda_available:
-        return torch.device("cpu"), "cpu", "CUDA unavailable"
+    if cuda_available:
+        gpu_name = torch.cuda.get_device_name(0)
+        return torch.device("cuda"), "cuda", f"{gpu_name}; automatic CUDA"
 
-    try:
-        # Small warm benchmark: compare the actual PyTorch compute backends before
-        # loading the much larger Kokoro model. This avoids assuming every user's
-        # GPU is faster than their CPU.
-        size = 768
-        cpu_a = torch.randn((size, size), device="cpu")
-        cpu_b = torch.randn((size, size), device="cpu")
-        start = time.perf_counter()
-        for _ in range(3):
-            torch.mm(cpu_a, cpu_b)
-        cpu_seconds = time.perf_counter() - start
-
-        gpu_a = torch.randn((size, size), device="cuda")
-        gpu_b = torch.randn((size, size), device="cuda")
-        torch.cuda.synchronize()
-        start = time.perf_counter()
-        for _ in range(3):
-            torch.mm(gpu_a, gpu_b)
-        torch.cuda.synchronize()
-        gpu_seconds = time.perf_counter() - start
-
-        del cpu_a, cpu_b, gpu_a, gpu_b
-        torch.cuda.empty_cache()
-
-        # Keep a modest margin so a noisy micro-benchmark does not switch to GPU
-        # for a negligible difference.
-        if gpu_seconds < cpu_seconds * 0.90:
-            gpu_name = torch.cuda.get_device_name(0)
-            return torch.device("cuda"), "cuda", f"{gpu_name}; benchmark GPU {gpu_seconds:.3f}s vs CPU {cpu_seconds:.3f}s"
-
-        return torch.device("cpu"), "cpu", f"benchmark CPU {cpu_seconds:.3f}s vs GPU {gpu_seconds:.3f}s"
-    except Exception as error:
-        print(f"GPU detection/benchmark failed: {error}", file=sys.stderr, flush=True)
-        return torch.device("cpu"), "cpu", "GPU benchmark failed"
+    return torch.device("cpu"), "cpu", "CUDA unavailable"
 
 
 def load_pipeline():

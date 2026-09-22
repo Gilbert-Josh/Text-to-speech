@@ -7,9 +7,12 @@ from pathlib import Path
 # eSpeak NG is installed in the standard Windows location by the official MSI.
 # Add it to this worker's PATH so the app does not depend on the terminal's PATH.
 if sys.platform == "win32":
-    espeak_path = r"C:\Program Files\eSpeak NG"
+    espeak_path = os.environ.get("KOKORO_ESPEAK_PATH", r"C:\Program Files\eSpeak NG")
     if os.path.isdir(espeak_path):
         os.environ["PATH"] = espeak_path + os.pathsep + os.environ.get("PATH", "")
+
+if os.environ.get("KOKORO_HF_HOME"):
+    os.environ["HF_HOME"] = os.environ["KOKORO_HF_HOME"]
 
 import numpy as np
 import soundfile as sf
@@ -54,7 +57,7 @@ input_text = f"{prefix}{text.strip()}"
 # Kokoro/dependency warnings are redirected to stderr so they cannot corrupt it.
 audio_parts = []
 with contextlib.redirect_stdout(sys.stderr):
-    pipeline = KPipeline(lang_code="a")
+    pipeline = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M")
     for _, _, audio in pipeline(input_text, voice=voice_id):
         audio_parts.append(audio)
 

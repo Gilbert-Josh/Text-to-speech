@@ -93,8 +93,6 @@ export const KOKORO_VOICES: VoiceOption[] = [
   },
 ];
 
-export const KOKORO_VOICES = KOKORO_VOICES;
-
 export const SPEAKING_STYLES: { id: SpeakingStyle; label: string; promptModifier: string; icon: string }[] = [
   { id: 'natural', label: 'Natural & Balanced', promptModifier: '', icon: 'Mic' },
   { id: 'cheerfully', label: 'Cheerful & Upbeat', promptModifier: 'Say cheerfully with an optimistic, upbeat rhythm: ', icon: 'Sparkles' },

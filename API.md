@@ -12,7 +12,7 @@ For external API access, configure:
 
 ```env
 TTS_API_KEY=replace_with_a_private_client_key
-OPENAI_API_KEY=replace_with_your_openai_api_key
+# No OpenAI key required for local TTS
 ```
 
 Send the client key as either:
@@ -44,7 +44,7 @@ Example:
 
 ## POST /api/tts
 
-Converts text to WAV speech using OpenAI `gpt-4o-mini-tts`.
+Converts text to WAV speech using local Kokoro TTS.
 
 Request:
 
@@ -99,7 +99,7 @@ Response:
 {
   "audioBase64": "<base64 WAV audio>",
   "mimeType": "audio/wav",
-  "engine": "openai",
+  "engine": "kokoro-local",
   "voice": "alloy",
   "style": "natural"
 }

@@ -53,9 +53,13 @@ def select_device():
         return torch.device("cpu"), "cpu", "forced CPU"
 
     cuda_available = bool(torch.cuda.is_available())
-    if requested == "cuda" and not cuda_available:
-        print("CUDA was requested but PyTorch reports no CUDA device; falling back to CPU.", file=sys.stderr, flush=True)
-        return torch.device("cpu"), "cpu", "CUDA unavailable"
+    if requested == "cuda":
+        if not cuda_available:
+            print("CUDA was requested but PyTorch reports no CUDA device; falling back to CPU.", file=sys.stderr, flush=True)
+            return torch.device("cpu"), "cpu", "CUDA unavailable"
+
+        gpu_name = torch.cuda.get_device_name(0)
+        return torch.device("cuda"), "cuda", f"{gpu_name}; forced CUDA"
 
     if not cuda_available:
         return torch.device("cpu"), "cpu", "CUDA unavailable"

@@ -3,7 +3,6 @@ import path from 'path';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import { PDFParse } from 'pdf-parse';
-import { GoogleGenAI } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 
 dotenv.config();
@@ -40,7 +39,13 @@ const upload = multer({
 
 // Local Kokoro TTS is invoked through the Python worker.
 // No paid TTS API key is required for speech generation.
-const KOKORO_SCRIPT = path.join(process.cwd(), 'local-tts', 'kokoro_tts.py');
+const APP_ROOT = process.env.APP_ROOT || process.cwd();
+const APP_RESOURCES = process.env.APP_RESOURCES_PATH || APP_ROOT;
+const KOKORO_SCRIPT = process.env.KOKORO_SCRIPT || (
+  process.env.APP_RESOURCES_PATH
+    ? path.join(APP_RESOURCES, 'local-tts', 'kokoro_tts.py')
+    : path.join(APP_ROOT, 'local-tts', 'kokoro_tts.py')
+);
 
 const styleInstructions: Record<string, string> = {
   natural: '',
@@ -58,32 +63,13 @@ function getKokoroPythonCommand(): string {
     return process.env.PYTHON_COMMAND;
   }
 
-  const candidates =
-    process.platform === 'win32'
-      ? [path.join(process.cwd(), '.kokoro-venv', 'Scripts', 'python.exe')]
-      : [path.join(process.cwd(), '.kokoro-venv', 'bin', 'python')];
-
-  return candidates[0];
-}
-
-// Gemini remains available only for the existing scanned-PDF OCR fallback.
-let aiClient: GoogleGenAI | null = null;
-function getGenAI(): GoogleGenAI {
-  if (!aiClient) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error('GEMINI_API_KEY environment variable is missing.');
-    }
-    aiClient = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
+  if (process.env.APP_RESOURCES_PATH) {
+    return path.join(APP_RESOURCES, 'kokoro-runtime', 'kokoro_tts.exe');
   }
-  return aiClient;
+
+  return process.platform === 'win32'
+    ? path.join(APP_ROOT, '.kokoro-venv', 'Scripts', 'python.exe')
+    : path.join(APP_ROOT, '.kokoro-venv', 'bin', 'python');
 }
 
 app.get('/api/health', (req, res) => {
@@ -91,7 +77,6 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     ttsEngine: 'kokoro-local',
     kokoroPython: getKokoroPythonCommand(),
-    hasGeminiOcrKey: Boolean(process.env.GEMINI_API_KEY),
   });
 });
 
@@ -146,7 +131,7 @@ app.post('/api/tts', requireApiKey, async (req, res) => {
       pythonCommand,
       [KOKORO_SCRIPT, selectedVoice, selectedStyle],
       {
-        cwd: process.cwd(),
+        cwd: APP_ROOT,
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
       }
@@ -273,43 +258,6 @@ app.post('/api/pdf-extract', (req, res, next) => {
       console.warn('PDFParse local extraction warning:', parseError);
     }
 
-    if (fullText.trim().length < 50 && process.env.GEMINI_API_KEY) {
-      try {
-        const ai = getGenAI();
-        const ocrResponse = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
-          contents: [
-            {
-              parts: [
-                {
-                  inlineData: {
-                    data: req.file.buffer.toString('base64'),
-                    mimeType: 'application/pdf',
-                  },
-                },
-                {
-                  text: 'Extract and transcribe all the written text in this PDF document verbatim for text-to-speech reading. Do not include commentary, just the full extracted text.',
-                },
-              ],
-            },
-          ],
-        });
-
-        const ocrText = ocrResponse.text?.trim() || '';
-        if (ocrText.length > fullText.trim().length) {
-          fullText = ocrText;
-          pages = [
-            {
-              pageNumber: 1,
-              text: fullText,
-              wordCount: fullText ? fullText.split(/\s+/).length : 0,
-            },
-          ];
-        }
-      } catch (ocrError) {
-        console.warn('Gemini PDF OCR fallback error:', ocrError);
-      }
-    }
 
     if (!fullText.trim()) {
       return res.status(422).json({
@@ -348,7 +296,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = path.join(APP_ROOT, 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

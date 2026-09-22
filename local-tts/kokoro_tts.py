@@ -1,4 +1,5 @@
 import contextlib
+import json
 import os
 import sys
 import tempfile
@@ -41,66 +42,121 @@ STYLE_PREFIXES = {
     "news-anchor": "Read in a clear broadcast-news style: ",
 }
 
-voice = sys.argv[1] if len(sys.argv) > 1 else "alloy"
-style = sys.argv[2] if len(sys.argv) > 2 else "natural"
-text = sys.stdin.read()
 
-if not text.strip():
-    raise SystemExit("No text supplied.")
+def load_pipeline():
+    model_dir = os.environ.get("KOKORO_MODEL_DIR")
 
-voice_id = VOICE_MAP.get(voice.lower(), "af_heart")
-prefix = STYLE_PREFIXES.get(style, "")
-input_text = f"{prefix}{text.strip()}"
-
-# Keep stdout machine-readable: the Node server expects only the WAV path there.
-# Kokoro/dependency warnings are redirected to stderr so they cannot corrupt it.
-model_dir = os.environ.get("KOKORO_MODEL_DIR")
-audio_parts = []
-
-with contextlib.redirect_stdout(sys.stderr):
     if model_dir:
         model_root = Path(model_dir)
         config_path = model_root / "config.json"
         weights_path = model_root / "kokoro-v1_0.pth"
-        voice_path = model_root / "voices" / f"{voice_id}.pt"
 
         if not config_path.is_file():
             raise FileNotFoundError(f"Kokoro config not found: {config_path}")
         if not weights_path.is_file():
             raise FileNotFoundError(f"Kokoro model weights not found: {weights_path}")
-        if not voice_path.is_file():
-            raise FileNotFoundError(f"Kokoro voice file not found: {voice_path}")
 
         model = KModel(
             repo_id="hexgrad/Kokoro-82M",
             config=str(config_path),
             model=str(weights_path),
         ).to("cpu").eval()
-        pipeline = KPipeline(
+
+        return KPipeline(
             lang_code="a",
             repo_id="hexgrad/Kokoro-82M",
             model=model,
         )
-        generator = pipeline(input_text, voice=str(voice_path))
-    else:
-        # Development fallback: use the normal Hugging Face cache.
-        pipeline = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M")
-        generator = pipeline(input_text, voice=voice_id)
 
-    for _, _, audio in generator:
-        audio_parts.append(audio)
+    # Development fallback: use the normal Hugging Face cache.
+    return KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M")
 
-if not audio_parts:
-    raise RuntimeError("Kokoro returned no audio.")
 
-with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-    output = Path(tmp.name)
+def synthesize(pipeline, text, voice, style):
+    voice_id = VOICE_MAP.get(str(voice).lower(), "af_heart")
+    prefix = STYLE_PREFIXES.get(str(style), "")
+    input_text = f"{prefix}{str(text).strip()}"
 
-try:
-    audio = np.concatenate(audio_parts)
-    sf.write(output, audio, 24000, subtype="PCM_16")
-    sys.stdout.write(str(output))
+    if not input_text.strip():
+        raise ValueError("No text supplied.")
+
+    model_dir = os.environ.get("KOKORO_MODEL_DIR")
+    voice_path = None
+
+    if model_dir:
+        voice_path = Path(model_dir) / "voices" / f"{voice_id}.pt"
+        if not voice_path.is_file():
+            raise FileNotFoundError(f"Kokoro voice file not found: {voice_path}")
+
+    audio_parts = []
+
+    # Keep stdout machine-readable. Kokoro/dependency warnings go to stderr.
+    with contextlib.redirect_stdout(sys.stderr):
+        generator = (
+            pipeline(input_text, voice=str(voice_path))
+            if voice_path
+            else pipeline(input_text, voice=voice_id)
+        )
+
+        for _, _, audio in generator:
+            audio_parts.append(audio)
+
+    if not audio_parts:
+        raise RuntimeError("Kokoro returned no audio.")
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        output = Path(tmp.name)
+
+    try:
+        audio = np.concatenate(audio_parts)
+        sf.write(output, audio, 24000, subtype="PCM_16")
+        return str(output)
+    except Exception:
+        output.unlink(missing_ok=True)
+        raise
+
+
+def run_persistent_worker():
+    # Load the model ONCE and keep it resident for all subsequent requests.
+    with contextlib.redirect_stdout(sys.stderr):
+        pipeline = load_pipeline()
+
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+
+        try:
+            request = json.loads(line)
+            output_path = synthesize(
+                pipeline,
+                request.get("text", ""),
+                request.get("voice", "alloy"),
+                request.get("style", "natural"),
+            )
+            response = {"ok": True, "path": output_path}
+        except Exception as error:
+            print(f"Kokoro persistent worker error: {error}", file=sys.stderr, flush=True)
+            response = {"ok": False, "error": str(error)}
+
+        sys.stdout.write(json.dumps(response) + "\n")
+        sys.stdout.flush()
+
+
+def run_single_request():
+    voice = sys.argv[1] if len(sys.argv) > 1 else "alloy"
+    style = sys.argv[2] if len(sys.argv) > 2 else "natural"
+    text = sys.stdin.read()
+
+    with contextlib.redirect_stdout(sys.stderr):
+        pipeline = load_pipeline()
+
+    output_path = synthesize(pipeline, text, voice, style)
+    sys.stdout.write(output_path)
     sys.stdout.flush()
-except Exception:
-    output.unlink(missing_ok=True)
-    raise
+
+
+if os.environ.get("KOKORO_PERSISTENT") == "1":
+    run_persistent_worker()
+else:
+    run_single_request()

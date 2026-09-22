@@ -366,10 +366,10 @@ export default function App() {
     speakChunk(0);
   };
 
-  // Plays next page in document sequential reading using local Kokoro.
-  // Plays next page in document sequential reading using selected AI voice
+  // Plays the next PDF page using local Kokoro.
   const playQueuePage = async (index: number) => {
     if (!documentQueueRef.current.isReading) return;
+
     const pages = documentQueueRef.current.pages;
     if (index >= pages.length) {
       documentQueueRef.current.isReading = false;
@@ -397,17 +397,6 @@ export default function App() {
     setIsLoading(true);
     setErrorMessage(null);
 
-    // If cooldown is active, fallback gracefully to browser speech for this page
-    if (quotaCooldownSeconds !== null && quotaCooldownSeconds > 0) {
-      setErrorMessage(
-        `      );
-      handleBrowserSynthesis(page.text, selectedVoiceId, selectedStyle, {
-        sourceDoc: pdfDoc?.filename,
-        pageNumber: page.pageNumber,
-      });
-      return;
-    }
-
     try {
       let pageText = page.text.trim();
       if (pageText.length > 3800) {
@@ -416,9 +405,7 @@ export default function App() {
 
       const response = await fetch('/api/tts', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: pageText,
           voice: selectedVoiceId,
@@ -428,30 +415,15 @@ export default function App() {
 
       const data = await response.json();
 
-      if (response.status === 429 || data.isQuotaExhausted) {
-        const cooldown = data.retryDelaySeconds || 20;
-        setQuotaCooldownSeconds(cooldown);
-        setErrorMessage(
-          `        );
-        handleBrowserSynthesis(page.text, selectedVoiceId, selectedStyle, {
-          sourceDoc: pdfDoc?.filename,
-          pageNumber: page.pageNumber,
-        });
-        return;
-      }
-
       if (!response.ok || data.error) {
         throw new Error(data.error || 'Failed to synthesize page audio.');
       }
 
       if (!data.audioBase64) {
-        throw new Error('No audio payload received from AI voice model.');
+        throw new Error('No audio payload received from Kokoro.');
       }
 
-      if (!documentQueueRef.current.isReading) {
-        // Playback was stopped while waiting for network
-        return;
-      }
+      if (!documentQueueRef.current.isReading) return;
 
       const { blobUrl } = processBase64Audio(data.audioBase64, data.mimeType);
       const newClip: GeneratedClip = {

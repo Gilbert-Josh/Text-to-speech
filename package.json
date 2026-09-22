@@ -42,5 +42,53 @@
     "electron-builder": "^26.0.12"
   },
   "main": "electron/main.cjs",
-  "description": "Local desktop text-to-speech studio powered by Kokoro."
+  "description": "Local desktop text-to-speech studio powered by Kokoro.",
+  "build": {
+    "appId": "com.gilbertjosh.texttospeechstudio",
+    "productName": "Text to Speech Studio",
+    "artifactName": "Text-to-Speech-Studio-Setup.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      "!local-tts/**/*",
+      "!src/**/*",
+      "!scripts/**/*",
+      "!packaging/**/*",
+      "!API.md",
+      "!.env.example",
+      "!server.ts",
+      "!vite.config.ts",
+      "!tsconfig.json"
+    ],
+    "extraResources": [
+      {
+        "from": "packaging/runtime",
+        "to": "kokoro-runtime"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "executableName": "Text-to-Speech-Studio"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Text to Speech Studio",
+      "artifactName": "Text-to-Speech-Studio-Setup.${ext}"
+    }
+  }
 }

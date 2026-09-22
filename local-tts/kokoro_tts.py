@@ -54,10 +54,32 @@ input_text = f"{prefix}{text.strip()}"
 
 # Keep stdout machine-readable: the Node server expects only the WAV path there.
 # Kokoro/dependency warnings are redirected to stderr so they cannot corrupt it.
+model_dir = os.environ.get("KOKORO_MODEL_DIR")
+if model_dir:
+    model_root = Path(model_dir)
+else:
+    model_root = Path(__file__).resolve().parent / "model"
+
+config_path = model_root / "config.json"
+weights_path = model_root / "kokoro-v1_0.pth"
+voice_path = model_root / "voices" / f"{voice_id}.pt"
+
+if not config_path.is_file():
+    raise FileNotFoundError(f"Kokoro config not found: {config_path}")
+if not weights_path.is_file():
+    raise FileNotFoundError(f"Kokoro model weights not found: {weights_path}")
+if not voice_path.is_file():
+    raise FileNotFoundError(f"Kokoro voice file not found: {voice_path}")
+
 audio_parts = []
 with contextlib.redirect_stdout(sys.stderr):
-    pipeline = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M")
-    for _, _, audio in pipeline(input_text, voice=voice_id):
+    model = KModel(
+        repo_id="hexgrad/Kokoro-82M",
+        config=str(config_path),
+        model=str(weights_path),
+    ).to("cpu").eval()
+    pipeline = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M", model=model)
+    for _, _, audio in pipeline(input_text, voice=str(voice_path)):
         audio_parts.append(audio)
 
 if not audio_parts:

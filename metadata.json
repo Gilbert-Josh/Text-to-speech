@@ -1,0 +1,6 @@
+{
+  "name": "Text to Speech Studio",
+  "description": "Convert text and uploaded PDF documents into natural spoken speech with AI voice synthesis, tone styling, audio visualization, and audio export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

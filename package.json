@@ -66,8 +66,16 @@
     ],
     "extraResources": [
       {
-        "from": "packaging/runtime",
-        "to": "kokoro-runtime"
+        "from": "packaging/runtime/kokoro_tts.exe",
+        "to": "kokoro-runtime/kokoro_tts.exe"
+      },
+      {
+        "from": "packaging/runtime/model",
+        "to": "kokoro-runtime/model"
+      },
+      {
+        "from": "packaging/runtime/espeak-ng",
+        "to": "kokoro-runtime/espeak-ng"
       }
     ],
     "win": {

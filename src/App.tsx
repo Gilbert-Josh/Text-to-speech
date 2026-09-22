@@ -500,7 +500,7 @@ export default function App() {
   const handleConvertPdfToMp3 = async () => {
     if (!pdfDoc?.fullText?.trim() || engine !== 'local' || isPdfConverting) return;
 
-    const outputName = pdfDoc.filename.replace(/\\.pdf$/i, '.mp3');
+    const outputName = pdfDoc.filename.replace(/\.pdf$/i, '.mp3');
     const chunks = chunkTextForSpeech(pdfDoc.fullText);
     if (!chunks.length) {
       setErrorMessage('No readable text was found in this PDF.');
@@ -568,7 +568,7 @@ export default function App() {
     setPdfConversionComplete(false);
     setPdfConversionProgress(0);
     setPdfConversionStatus(null);
-    setPdfDownloadName(doc.filename.replace(/\\.pdf$/i, '.mp3'));
+    setPdfDownloadName(doc.filename.replace(/\.pdf$/i, '.mp3'));
     setText(doc.fullText);
   };
 

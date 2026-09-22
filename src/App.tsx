@@ -677,7 +677,7 @@ export default function App() {
               >
                 <Sparkles className="w-3.5 h-3.5 text-sky-500" />
                 <span>
-                  Gemini 3.1 TTS
+                  Online
                   {quotaCooldownSeconds !== null && quotaCooldownSeconds > 0 && (
                     <span className="ml-1 text-[10px] text-amber-500 font-mono font-normal">
                       ({quotaCooldownSeconds}s)

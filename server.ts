@@ -14,6 +14,27 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '10mb' }));
 
+function requireApiKey(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const configuredKey = process.env.TTS_API_KEY;
+
+  // If no public API key is configured, keep local development behavior unchanged.
+  if (!configuredKey) {
+    return next();
+  }
+
+  const authorization = req.header('authorization') || '';
+  const bearerMatch = authorization.match(/^Bearer\\s+(.+)$/i);
+  const suppliedKey = bearerMatch?.[1] || req.header('x-api-key');
+
+  if (!suppliedKey || suppliedKey !== configuredKey) {
+    return res.status(401).json({
+      error: 'Unauthorized. Supply a valid API key using Authorization: Bearer <TTS_API_KEY> or x-api-key.',
+    });
+  }
+
+  next();
+}
+
 // Multer memory storage for PDF processing (up to 100MB)
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -63,7 +84,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // Text-to-Speech API endpoint
-app.post('/api/tts', async (req, res) => {
+app.post('/api/tts', requireApiKey, async (req, res) => {
   try {
     const { text, voice = 'alloy', speakingStyle = 'natural' } = req.body;
 

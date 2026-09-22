@@ -3,6 +3,7 @@ import path from 'path';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import { PDFParse } from 'pdf-parse';
+import OpenAI from 'openai';
 import { GoogleGenAI } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 
@@ -19,7 +20,21 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 },
 });
 
-// Lazy initialize Gemini client to prevent crashes if key is missing on boot
+// OpenAI client for text-to-speech only.
+// The API key is read server-side and is never exposed to the React frontend.
+let openaiClient: OpenAI | null = null;
+function getOpenAI(): OpenAI {
+  if (!openaiClient) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error('OPENAI_API_KEY environment variable is missing.');
+    }
+    openaiClient = new OpenAI({ apiKey });
+  }
+  return openaiClient;
+}
+
+// Gemini remains available only for the existing scanned-PDF OCR fallback.
 let aiClient: GoogleGenAI | null = null;
 function getGenAI(): GoogleGenAI {
   if (!aiClient) {
@@ -43,113 +58,109 @@ function getGenAI(): GoogleGenAI {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    hasApiKey: Boolean(process.env.GEMINI_API_KEY),
+    hasApiKey: Boolean(process.env.OPENAI_API_KEY),
   });
 });
 
 // Text-to-Speech API endpoint
 app.post('/api/tts', async (req, res) => {
   try {
-    const { text, voice = 'Kore', speakingStyle = 'natural' } = req.body;
+    const { text, voice = 'alloy', speakingStyle = 'natural' } = req.body;
 
     if (!text || typeof text !== 'string' || text.trim().length === 0) {
       return res.status(400).json({ error: 'Text input is required' });
     }
 
-    const ai = getGenAI();
+    const inputText = text.trim();
 
-    // Enrich prompt with stylistic nuance if requested
-    let promptWithStyle = text.trim();
-
-    // Guardrail against excessive token payloads on free tier TTS (cap prompt at ~4000 chars)
-    if (promptWithStyle.length > 4000) {
-      promptWithStyle = promptWithStyle.substring(0, 4000).trim();
+    if (inputText.length > 4096) {
+      return res.status(400).json({
+        error: 'Text input must be 4096 characters or fewer.',
+      });
     }
 
-    if (speakingStyle && speakingStyle !== 'natural') {
-      const stylePrompts: Record<string, string> = {
-        cheerfully: 'Say cheerfully with warm enthusiasm: ',
-        authoritative: 'Deliver authoritatively with confident composure: ',
-        calm: 'Speak calmly and gently: ',
-        whisper: 'Speak softly like an intimate whisper: ',
-        storyteller: 'Narrate dramatically like a compelling audiobook storyteller: ',
-        energetic: 'Deliver with high energy and excitement: ',
-        'news-anchor': 'Read with clear, authoritative broadcast news delivery: ',
-      };
-      const modifier = stylePrompts[speakingStyle] || '';
-      promptWithStyle = `${modifier}${promptWithStyle}`;
-    }
+    const allowedVoices = new Set([
+      'alloy',
+      'ash',
+      'ballad',
+      'coral',
+      'echo',
+      'fable',
+      'nova',
+      'onyx',
+      'sage',
+      'shimmer',
+    ]);
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.1-flash-tts-preview',
-      contents: [{ parts: [{ text: promptWithStyle }] }],
-      config: {
-        responseModalities: ['AUDIO'],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: {
-              voiceName: voice,
-            },
-          },
-        },
-      },
+    const selectedVoice = allowedVoices.has(String(voice).toLowerCase())
+      ? String(voice).toLowerCase()
+      : 'alloy';
+
+    const styleInstructions: Record<string, string> = {
+      natural: '',
+      cheerfully: 'Speak cheerfully with warm enthusiasm.',
+      energetic: 'Speak with high energy and enthusiasm.',
+      storyteller: 'Narrate dramatically like an audiobook storyteller.',
+      authoritative: 'Deliver with a confident, authoritative tone.',
+      calm: 'Speak calmly and gently.',
+      whisper: 'Speak softly and intimately.',
+      'news-anchor': 'Read in a clear broadcast-news style.',
+    };
+
+    const selectedStyle =
+      typeof speakingStyle === 'string' && speakingStyle in styleInstructions
+        ? speakingStyle
+        : 'natural';
+
+    const instructions = styleInstructions[selectedStyle];
+    const openai = getOpenAI();
+
+    const response = await openai.audio.speech.create({
+      model: 'gpt-4o-mini-tts',
+      voice: selectedVoice,
+      input: inputText,
+      ...(instructions ? { instructions } : {}),
+      response_format: 'wav',
     });
 
-    const part = response.candidates?.[0]?.content?.parts?.[0];
-    const base64Audio = part?.inlineData?.data;
-    const mimeType = part?.inlineData?.mimeType || 'audio/wav';
+    const audioBuffer = Buffer.from(await response.arrayBuffer());
 
-    if (!base64Audio) {
+    if (!audioBuffer.length) {
       return res.status(502).json({
         error: 'No audio data was returned by the speech model.',
       });
     }
 
     return res.json({
-      audioBase64: base64Audio,
-      mimeType,
-      engine: 'gemini',
-      voice,
-      style: speakingStyle,
+      audioBase64: audioBuffer.toString('base64'),
+      mimeType: 'audio/wav',
+      engine: 'openai',
+      voice: selectedVoice,
+      style: selectedStyle,
     });
   } catch (error: any) {
     const rawMsg = error?.message || '';
-    const isQuota =
-      error?.status === 429 ||
-      error?.code === 429 ||
-      rawMsg.includes('429') ||
-      rawMsg.includes('quota') ||
-      rawMsg.includes('RESOURCE_EXHAUSTED') ||
-      rawMsg.includes('Quota exceeded');
 
-    if (isQuota) {
-      // Extract retry delay if present in error message (e.g. "retry in 20.637201592s" or RetryInfo)
-      let retrySeconds = 20;
-      const match = rawMsg.match(/retry in\s+([0-9.]+)\s*s/i);
-      if (match) {
-        retrySeconds = Math.ceil(parseFloat(match[1]));
-      } else if (Array.isArray(error?.details)) {
-        const retryInfo = error.details.find((d: any) => d?.['@type']?.includes('RetryInfo'));
-        if (retryInfo?.retryDelay) {
-          const secMatch = String(retryInfo.retryDelay).match(/([0-9]+)/);
-          if (secMatch) retrySeconds = parseInt(secMatch[1], 10);
-        }
-      }
+    console.error('Error generating OpenAI speech:', error);
 
-      console.warn(`[Gemini TTS] Quota limit reached (429). Cooldown: ${retrySeconds}s.`);
+    if (error?.status === 401 || error?.code === 'invalid_api_key') {
+      return res.status(500).json({
+        error: 'OpenAI API authentication failed. Check OPENAI_API_KEY.',
+        isApiKeyMissing: false,
+      });
+    }
+
+    if (error?.status === 429) {
       return res.status(429).json({
-        error: `Gemini Voice quota limit reached (Free tier rate limit: 10,000 tokens/min). Please wait ${retrySeconds}s or use Browser Speech.`,
+        error: 'OpenAI rate limit or quota reached. Please wait and try again.',
         isQuotaExhausted: true,
-        retryDelaySeconds: retrySeconds,
         fallbackAvailable: true,
       });
     }
 
-    console.error('Error generating speech:', error);
-    const message = rawMsg || 'Failed to generate speech';
     return res.status(500).json({
-      error: message,
-      isApiKeyMissing: message.includes('GEMINI_API_KEY'),
+      error: rawMsg || 'Failed to generate speech',
+      isApiKeyMissing: rawMsg.includes('OPENAI_API_KEY'),
     });
   }
 });
@@ -183,7 +194,7 @@ app.post('/api/pdf-extract', (req, res, next) => {
       // 1. Fast local extraction via PDFParse
       const parser = new PDFParse({ data: req.file.buffer });
       const textResult = await parser.getText();
-      
+
       numPages = textResult.total || 1;
       if (textResult.pages && Array.isArray(textResult.pages) && textResult.pages.length > 0) {
         pages = textResult.pages.map((p: any) => {

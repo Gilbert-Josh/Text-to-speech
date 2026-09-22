@@ -13,6 +13,7 @@ if sys.platform == "win32":
 
 if os.environ.get("KOKORO_HF_HOME"):
     os.environ["HF_HOME"] = os.environ["KOKORO_HF_HOME"]
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import numpy as np
 import soundfile as sf

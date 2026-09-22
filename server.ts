@@ -127,9 +127,13 @@ app.post('/api/tts', requireApiKey, async (req, res) => {
       characters: inputText.length,
     });
 
+    const workerArgs = process.env.APP_RESOURCES_PATH
+      ? [selectedVoice, selectedStyle]
+      : [KOKORO_SCRIPT, selectedVoice, selectedStyle];
+
     const child = spawn(
       pythonCommand,
-      [KOKORO_SCRIPT, selectedVoice, selectedStyle],
+      workerArgs,
       {
         cwd: APP_ROOT,
         windowsHide: true,

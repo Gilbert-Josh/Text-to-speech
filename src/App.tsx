@@ -16,9 +16,8 @@ import {
   Radio,
   FileText,
   FileUp,
-  Clock,
 } from 'lucide-react';
-import { GEMINI_VOICES, SPEAKING_STYLES, SAMPLE_TEXTS } from './data/voices';
+import { KOKORO_VOICES, SPEAKING_STYLES, SAMPLE_TEXTS } from './data/voices';
 import { GeneratedClip, SpeakingStyle, PdfDocumentData } from './types';
 import { VoiceSelector } from './components/VoiceSelector';
 import { AudioVisualizer } from './components/AudioVisualizer';
@@ -60,7 +59,6 @@ export default function App() {
   const [selectedVoiceId, setSelectedVoiceId] = useState<string>('alloy');
   const [selectedStyle, setSelectedStyle] = useState<SpeakingStyle>('natural');
   const [engine, setEngine] = useState<'local' | 'browser'>('local');
-  const [quotaCooldownSeconds, setQuotaCooldownSeconds] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeClip, setActiveClip] = useState<GeneratedClip | null>(null);
@@ -70,7 +68,6 @@ export default function App() {
   const [readingSectionTitle, setReadingSectionTitle] = useState<'full' | 'page' | null>(null);
   const [readingPageNumber, setReadingPageNumber] = useState<number | null>(null);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
-  const [serverHealth, setServerHealth] = useState<{ hasApiKey: boolean } | null>(null);
 
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -88,39 +85,13 @@ export default function App() {
     isReading: false,
   });
 
-  // Countdown timer for Gemini rate-limit quota cooldown
   useEffect(() => {
-    if (quotaCooldownSeconds === null || quotaCooldownSeconds <= 0) return;
-    const interval = setInterval(() => {
-      setQuotaCooldownSeconds((prev) => {
-        if (prev === null || prev <= 1) return null;
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [quotaCooldownSeconds]);
-
-  // Check server health / Gemini API key status
-  useEffect(() => {
-    fetch('/api/health')
-      .then((res) => res.json())
-      .then((data) => {
-        setServerHealth({ hasApiKey: Boolean(data.hasGeminiOcrKey) });
-        // Kokoro is the primary local TTS engine. Gemini is only used for scanned-PDF OCR.
-        setEngine('local');
-      })
-      .catch(() => {
-        setServerHealth({ hasApiKey: false });
-        // Keep local Kokoro as the default even if the health request is unavailable.
-        setEngine('local');
-      });
-
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       synthRef.current = window.speechSynthesis;
     }
   }, []);
 
-  const selectedVoice = GEMINI_VOICES.find((v) => v.id === selectedVoiceId) || GEMINI_VOICES[0];
+  const selectedVoice = KOKORO_VOICES.find((v) => v.id === selectedVoiceId) || KOKORO_VOICES[0];
 
   // Synthesize speech handler with optional direct text override
   const handleGenerate = async (
@@ -138,15 +109,6 @@ export default function App() {
     setText(targetText);
     setErrorMessage(null);
     setIsLoading(true);
-
-    // If Gemini is cooling down due to rate limit, seamlessly synthesize with Browser Speech
-    if (engine === 'local' && quotaCooldownSeconds !== null && quotaCooldownSeconds > 0) {
-      setErrorMessage(
-        `Gemini rate limit cooldown in progress (${quotaCooldownSeconds}s left). Reading with Browser Speech engine.`
-      );
-      handleBrowserSynthesis(targetText, selectedVoiceId, selectedStyle, meta);
-      return;
-    }
 
     if (engine === 'browser') {
       handleBrowserSynthesis(targetText, selectedVoiceId, selectedStyle, meta);
@@ -167,18 +129,6 @@ export default function App() {
       });
 
       const data = await response.json();
-
-      // Handle 429 quota exhaustion gracefully
-      if (response.status === 429 || data.isQuotaExhausted) {
-        const cooldown = data.retryDelaySeconds || 20;
-        setQuotaCooldownSeconds(cooldown);
-        setEngine('browser');
-        setErrorMessage(
-          `Gemini voice limit reached (10,000 tokens/min free tier). Seamlessly switched to Browser Speech engine!`
-        );
-        handleBrowserSynthesis(targetText, selectedVoiceId, selectedStyle, meta);
-        return;
-      }
 
       if (!response.ok || data.error) {
         throw new Error(data.error || 'Failed to synthesize speech');
@@ -206,18 +156,7 @@ export default function App() {
       setHistory((prev) => [newClip, ...prev.slice(0, 19)]);
     } catch (err: any) {
       const msg = err?.message || 'Speech generation encountered an error.';
-      const isQuota = msg.includes('429') || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED');
-
-      if (isQuota) {
-        setQuotaCooldownSeconds(20);
-        setEngine('browser');
-        setErrorMessage('Gemini rate limit reached (10,000 tokens/min). Switched to Browser Speech engine.');
-        if (synthRef.current) {
-          handleBrowserSynthesis(targetText, selectedVoiceId, selectedStyle, meta);
-        }
-      } else {
-        setErrorMessage(msg);
-      }
+      setErrorMessage(msg);
     } finally {
       setIsLoading(false);
     }
@@ -427,6 +366,7 @@ export default function App() {
     speakChunk(0);
   };
 
+  // Plays next page in document sequential reading using local Kokoro.
   // Plays next page in document sequential reading using selected AI voice
   const playQueuePage = async (index: number) => {
     if (!documentQueueRef.current.isReading) return;
@@ -460,8 +400,7 @@ export default function App() {
     // If cooldown is active, fallback gracefully to browser speech for this page
     if (quotaCooldownSeconds !== null && quotaCooldownSeconds > 0) {
       setErrorMessage(
-        `Gemini rate limit cooldown in progress (${quotaCooldownSeconds}s left). Reading Page ${page.pageNumber} with Browser Speech.`
-      );
+        `      );
       handleBrowserSynthesis(page.text, selectedVoiceId, selectedStyle, {
         sourceDoc: pdfDoc?.filename,
         pageNumber: page.pageNumber,
@@ -493,8 +432,7 @@ export default function App() {
         const cooldown = data.retryDelaySeconds || 20;
         setQuotaCooldownSeconds(cooldown);
         setErrorMessage(
-          `Gemini voice limit reached (10,000 tokens/min free tier). Reading Page ${page.pageNumber} with Browser Speech.`
-        );
+          `        );
         handleBrowserSynthesis(page.text, selectedVoiceId, selectedStyle, {
           sourceDoc: pdfDoc?.filename,
           pageNumber: page.pageNumber,
@@ -521,7 +459,7 @@ export default function App() {
         text: pageText,
         voice: selectedVoiceId,
         style: selectedStyle,
-        engine: 'gemini',
+        engine: 'local',
         audioUrl: blobUrl,
         createdAt: Date.now(),
         sourceDoc: pdfDoc?.filename,
@@ -535,7 +473,7 @@ export default function App() {
     } catch (err: any) {
       console.error('Error generating page audio:', err);
       const msg = err?.message || 'Failed to synthesize audio';
-      setErrorMessage(`AI Voice error on Page ${page.pageNumber}: ${msg}. Reading with Browser Speech.`);
+      setErrorMessage(`Kokoro error on Page ${page.pageNumber}: ${msg}. Reading with Browser Speech.`);
       handleBrowserSynthesis(page.text, selectedVoiceId, selectedStyle, {
         sourceDoc: pdfDoc?.filename,
         pageNumber: page.pageNumber,
@@ -662,13 +600,8 @@ export default function App() {
             <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-lg text-xs font-medium border border-slate-200 dark:border-slate-700">
               <button
                 type="button"
-                id="engine-select-gemini-btn"
-                onClick={() => {
-                  if (quotaCooldownSeconds && quotaCooldownSeconds > 0) {
-                    setErrorMessage(`Gemini rate limit cooldown: ${quotaCooldownSeconds}s remaining.`);
-                  }
-                  setEngine('local');
-                }}
+                id="engine-select-online-btn"
+                onClick={() => setEngine('local')}
                 className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-all ${
                   engine === 'local'
                     ? 'bg-white dark:bg-slate-700 text-sky-600 dark:text-sky-300 shadow-2xs font-semibold'
@@ -678,10 +611,7 @@ export default function App() {
                 <Sparkles className="w-3.5 h-3.5 text-sky-500" />
                 <span>
                   Online
-                  {quotaCooldownSeconds !== null && quotaCooldownSeconds > 0 && (
-                    <span className="ml-1 text-[10px] text-amber-500 font-mono font-normal">
-                      ({quotaCooldownSeconds}s)
-                    </span>
+                </span>
                   )}
                 </span>
               </button>
@@ -706,33 +636,6 @@ export default function App() {
 
       {/* Main Studio Body */}
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
-        {/* Quota rate-limit cooldown banner */}
-        {quotaCooldownSeconds !== null && quotaCooldownSeconds > 0 && (
-          <div
-            id="quota-cooldown-banner"
-            className="p-3.5 rounded-xl border border-amber-200 dark:border-amber-900/50 bg-amber-50/90 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 text-xs flex items-center justify-between shadow-2xs"
-          >
-            <div className="flex items-center gap-2.5">
-              <Clock className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
-              <div>
-                <span className="font-semibold">Gemini Rate Limit Cooldown: </span>
-                <span>
-                  Free tier limit reached. Switched to Browser Speech engine. Gemini ready in{' '}
-                  <strong className="font-mono text-amber-900 dark:text-amber-100">{quotaCooldownSeconds}s</strong>.
-                </span>
-              </div>
-            </div>
-            <button
-              type="button"
-              id="dismiss-quota-btn"
-              onClick={() => setQuotaCooldownSeconds(null)}
-              className="text-amber-600 hover:text-amber-800 dark:text-amber-400 text-xs font-medium ml-3"
-            >
-              Dismiss
-            </button>
-          </div>
-        )}
-
         {/* Error notification banner if any */}
         {errorMessage && (
           <div
@@ -924,7 +827,7 @@ export default function App() {
 
           {/* Voice Actor Selector */}
           <VoiceSelector
-            voices={GEMINI_VOICES}
+            voices={KOKORO_VOICES}
             selectedVoiceId={selectedVoiceId}
             onSelectVoice={(id) => setSelectedVoiceId(id)}
             onPreviewSample={handlePreviewSample}

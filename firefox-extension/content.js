@@ -4,7 +4,6 @@ if (!globalThis.__ttsStudioContentLoaded) {
   let audioQueue = [];
   let playing = false;
   let currentAudio = null;
-  let currentItem = null;
   let statusTimer = null;
   let paused = false;
 
@@ -14,17 +13,9 @@ if (!globalThis.__ttsStudioContentLoaded) {
       panel = document.createElement("div");
       panel.id = "tts-studio-firefox-controls";
       Object.assign(panel.style, {
-        position: "fixed",
-        right: "20px",
-        bottom: "20px",
-        zIndex: "2147483647",
-        display: "flex",
-        alignItems: "center",
-        gap: "6px",
-        padding: "8px 10px",
-        borderRadius: "12px",
-        background: "#0f172a",
-        color: "#fff",
+        position: "fixed", right: "20px", bottom: "20px", zIndex: "2147483647",
+        display: "flex", alignItems: "center", gap: "6px", padding: "8px 10px",
+        borderRadius: "12px", background: "#0f172a", color: "#fff",
         font: "13px/1.2 system-ui, sans-serif",
         boxShadow: "0 8px 30px rgba(0,0,0,.35)",
         border: "1px solid rgba(255,255,255,.14)"
@@ -69,12 +60,8 @@ if (!globalThis.__ttsStudioContentLoaded) {
 
   function styleButton(button) {
     Object.assign(button.style, {
-      border: "1px solid #475569",
-      borderRadius: "7px",
-      padding: "5px 8px",
-      background: "#1e293b",
-      color: "#fff",
-      cursor: "pointer",
+      border: "1px solid #475569", borderRadius: "7px", padding: "5px 8px",
+      background: "#1e293b", color: "#fff", cursor: "pointer",
       font: "12px system-ui, sans-serif"
     });
   }
@@ -105,13 +92,11 @@ if (!globalThis.__ttsStudioContentLoaded) {
 
   function clearFollowAlong() {
     window.getSelection()?.removeAllRanges();
-    const peanut = document.getElementById("tts-studio-floating-peanut");
-    peanut?.remove();
+    document.getElementById("tts-studio-floating-peanut")?.remove();
   }
 
   function followAlong(text) {
     clearFollowAlong();
-
     const searchText = text.replace(/\s+/g, " ").trim();
     if (!searchText) return;
 
@@ -121,9 +106,8 @@ if (!globalThis.__ttsStudioContentLoaded) {
     } catch {}
 
     if (!found) {
-      const shorter = searchText.slice(0, Math.min(searchText.length, 500));
       try {
-        found = window.find(shorter, false, false, true, false, false, false);
+        found = window.find(searchText.slice(0, Math.min(searchText.length, 500)), false, false, true, false, false, false);
       } catch {}
     }
 
@@ -174,7 +158,6 @@ if (!globalThis.__ttsStudioContentLoaded) {
 
   function skipCurrent() {
     if (!currentAudio) return;
-    audioQueue = [];
     currentAudio.pause();
     currentAudio.currentTime = 0;
     currentAudio.dispatchEvent(new Event("tts-skip"));
@@ -200,30 +183,25 @@ if (!globalThis.__ttsStudioContentLoaded) {
 
     playing = true;
     paused = false;
-    currentItem = audioQueue.shift();
+    const item = audioQueue.shift();
 
     try {
-      const blob = base64ToBlob(currentItem.audioBase64, currentItem.mimeType);
+      const blob = base64ToBlob(item.audioBase64, item.mimeType);
       const url = URL.createObjectURL(blob);
       currentAudio = new Audio(url);
 
       ensureUi();
       document.getElementById("tts-studio-pause").textContent = "Pause";
-      updateProgress("Reading " + currentItem.position + "/" + currentItem.total + "…");
-      followAlong(currentItem.highlightText || "");
+      updateProgress("Reading " + item.position + "/" + item.total + "…");
+      followAlong(item.highlightText || "");
 
       await currentAudio.play();
 
       const result = await new Promise((resolve) => {
-        const finish = () => resolve("finished");
-        const error = () => resolve("error");
-        const skip = () => resolve("skipped");
-        const stop = () => resolve("stopped");
-
-        currentAudio.addEventListener("ended", finish, { once: true });
-        currentAudio.addEventListener("error", error, { once: true });
-        currentAudio.addEventListener("tts-skip", skip, { once: true });
-        currentAudio.addEventListener("tts-stop", stop, { once: true });
+        currentAudio.addEventListener("ended", () => resolve("finished"), { once: true });
+        currentAudio.addEventListener("error", () => resolve("error"), { once: true });
+        currentAudio.addEventListener("tts-skip", () => resolve("skipped"), { once: true });
+        currentAudio.addEventListener("tts-stop", () => resolve("stopped"), { once: true });
       });
 
       URL.revokeObjectURL(url);
@@ -238,14 +216,13 @@ if (!globalThis.__ttsStudioContentLoaded) {
       showStatus("Firefox could not play the generated audio.");
     } finally {
       currentAudio = null;
-      currentItem = null;
       playing = false;
       paused = false;
       clearFollowAlong();
 
       if (audioQueue.length) {
         playNext();
-      } else if (document.getElementById("tts-studio-firefox-controls")) {
+      } else {
         browser.runtime.sendMessage({ type: "audio-finished" });
         updateProgress("Finished.");
         setTimeout(() => {

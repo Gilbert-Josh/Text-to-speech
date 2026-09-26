@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Text to Speech Studio</title>
+  <style>
+    body { width: 300px; margin: 0; padding: 16px; font: 14px system-ui, sans-serif; background: #111827; color: #fff; }
+    h1 { font-size: 16px; margin: 0 0 14px; }
+    label { display:block; margin: 10px 0 5px; color:#cbd5e1; }
+    select, button { width:100%; box-sizing:border-box; border-radius:8px; padding:9px; border:1px solid #475569; background:#1e293b; color:#fff; }
+    button { margin-top:10px; cursor:pointer; font-weight:600; }
+    button:hover { background:#334155; }
+    #status { margin-top:10px; min-height:20px; color:#cbd5e1; font-size:12px; }
+  </style>
+</head>
+<body>
+  <h1>🥜 Text to Speech Studio</h1>
+
+  <label for="voice">Voice</label>
+  <select id="voice">
+    <option value="alloy">Alloy</option>
+    <option value="ash">Ash</option>
+    <option value="ballad">Ballad</option>
+    <option value="coral">Coral</option>
+    <option value="echo">Echo</option>
+    <option value="fable">Fable</option>
+    <option value="nova">Nova</option>
+    <option value="onyx">Onyx</option>
+    <option value="sage">Sage</option>
+    <option value="shimmer">Shimmer</option>
+  </select>
+
+  <label for="style">Speaking style</label>
+  <select id="style">
+    <option value="natural">Natural</option>
+    <option value="cheerfully">Cheerfully</option>
+    <option value="energetic">Energetic</option>
+    <option value="storyteller">Storyteller</option>
+    <option value="authoritative">Authoritative</option>
+    <option value="calm">Calm</option>
+    <option value="whisper">Whisper</option>
+    <option value="news-anchor">News anchor</option>
+  </select>
+
+  <button id="selection">▶ Read selection</button>
+  <button id="page">▶ Read page</button>
+  <button id="stop">■ Stop</button>
+  <div id="status"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

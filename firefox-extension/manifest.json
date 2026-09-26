@@ -1,36 +1,27 @@
 {
   "manifest_version": 3,
   "name": "Text to Speech Studio",
-  "version": "1.0.1",
-  "description": "Read selected text or the current webpage using your local Text to Speech Studio Kokoro engine.",
+  "version": "1.1.0",
+  "description": "Read webpages with your local Text to Speech Studio Kokoro engine.",
   "browser_specific_settings": {
     "gecko": {
       "id": "tts-studio@gilbert-josh",
       "strict_min_version": "109.0"
     }
   },
-  "permissions": [
-    "activeTab",
-    "scripting",
-    "contextMenus"
-  ],
+  "permissions": ["activeTab", "scripting", "contextMenus", "storage"],
   "host_permissions": [
     "http://127.0.0.1:3000/*",
     "http://localhost:3000/*"
   ],
-  "background": {
-    "scripts": [
-      "background.js"
-    ]
-  },
+  "background": { "scripts": ["background.js"] },
   "action": {
-    "default_title": "Read with Text to Speech Studio"
+    "default_title": "Text to Speech Studio",
+    "default_popup": "popup.html"
   },
   "commands": {
     "read-selection": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+Y"
-      },
+      "suggested_key": { "default": "Ctrl+Shift+Y" },
       "description": "Read selected text with Text to Speech Studio"
     }
   }

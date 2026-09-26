@@ -10,6 +10,30 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
+// Allow the Firefox WebExtension to call the local API.
+// This is restricted to localhost/127.0.0.1 origins rather than enabling
+// arbitrary remote web pages to use the local TTS service.
+app.use((req, res, next) => {
+  const origin = req.header('origin') || '';
+
+  if (
+    origin.startsWith('moz-extension://') ||
+    origin === 'http://localhost:3000' ||
+    origin === 'http://127.0.0.1:3000'
+  ) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Vary', 'Origin');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
+  }
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
 app.use(express.json({ limit: '10mb' }));
 
 function requireApiKey(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -233,7 +257,6 @@ app.post('/api/tts', requireApiKey, async (req, res) => {
       style: selectedStyle,
     });
 
-
     const fs = await import('node:fs/promises');
     const audioBuffer = await fs.readFile(outputPath);
 
@@ -317,7 +340,6 @@ app.post('/api/pdf-extract', (req, res, next) => {
     } catch (parseError) {
       console.warn('PDFParse local extraction warning:', parseError);
     }
-
 
     if (!fullText.trim()) {
       return res.status(422).json({

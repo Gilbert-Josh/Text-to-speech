@@ -18,6 +18,78 @@ export interface PdfParseProgress {
   totalPages?: number;
 }
 
+interface PositionedTextItem {
+  text: string;
+  x: number;
+  y: number;
+  hasEOL: boolean;
+}
+
+/**
+ * Rebuild PDF text in visual reading order.
+ *
+ * PDF text objects are often stored in an internal order that is not the
+ * order a person sees on the page. Reading them directly can produce things
+ * such as "ll concider" or unrelated header/footer fragments. We group
+ * nearby items into visual lines and sort each line left-to-right before
+ * joining the text.
+ */
+function cleanPdfText(items: PositionedTextItem[]): string {
+  const positioned = items
+    .filter((item) => item.text.trim() || item.hasEOL)
+    .sort((a, b) => {
+      const yDiff = b.y - a.y;
+      return Math.abs(yDiff) > 3 ? yDiff : a.x - b.x;
+    });
+
+  const lines: Array<{ y: number; parts: PositionedTextItem[] }> = [];
+
+  for (const item of positioned) {
+    const line = lines.find((candidate) => Math.abs(candidate.y - item.y) <= 3);
+    if (line) {
+      line.parts.push(item);
+    } else {
+      lines.push({ y: item.y, parts: [item] });
+    }
+  }
+
+  lines.sort((a, b) => b.y - a.y);
+
+  const output: string[] = [];
+
+  for (const line of lines) {
+    line.parts.sort((a, b) => a.x - b.x);
+
+    let lineText = '';
+    for (const part of line.parts) {
+      const value = part.text.trim();
+      if (!value) continue;
+
+      if (lineText && !/[\s-]$/.test(lineText) && !/^[,.;:!?)]/.test(value)) {
+        lineText += ' ';
+      }
+      lineText += value;
+
+      if (part.hasEOL) lineText += ' ';
+    }
+
+    lineText = lineText
+      .replace(/\s+/g, ' ')
+      .replace(/\s+([,.;:!?])/g, '$1')
+      .trim();
+
+    if (lineText) output.push(lineText);
+  }
+
+  return output
+    .join('\n')
+    // Join words that were split across a visual line break.
+    .replace(/([A-Za-z])-[ \t]*\n[ \t]*([a-z])/g, '$1$2')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 /**
  * Parses a PDF file directly in the browser using PDF.js.
  * This works entirely client-side without uploading large files to the server,
@@ -54,40 +126,26 @@ export async function extractPdfInBrowser(
     try {
       const page = await pdf.getPage(pageNum);
       const textContent = await page.getTextContent();
-      
-      const textItems: string[] = [];
-      let lastY: number | null = null;
+
+      const textItems: PositionedTextItem[] = [];
 
       for (const item of textContent.items) {
-        if ('str' in item) {
-          const str = item.str;
-          if (!str && !item.hasEOL) continue;
-          
-          // Add line break if Y coordinate shifted significantly or hasEOL
-          const currentY = 'transform' in item && Array.isArray(item.transform) ? item.transform[5] : null;
-          if (lastY !== null && currentY !== null && Math.abs(currentY - lastY) > 6) {
-            textItems.push('\n');
-          }
-          lastY = currentY;
+        if (!('str' in item)) continue;
 
-          textItems.push(str);
-          if (item.hasEOL) {
-            textItems.push('\n');
-          } else {
-            textItems.push(' ');
-          }
-        }
+        const str = item.str || '';
+        const transform = 'transform' in item && Array.isArray(item.transform) ? item.transform : null;
+        const x = transform?.[4] ?? 0;
+        const y = transform?.[5] ?? 0;
+
+        textItems.push({
+          text: str,
+          x,
+          y,
+          hasEOL: Boolean(item.hasEOL),
+        });
       }
 
-      // Clean up text spacing and formatting
-      const rawText = textItems.join('');
-      const cleanText = rawText
-        .split('\n')
-        .map((line) => line.replace(/[ \t]+/g, ' ').trim())
-        .join('\n')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-
+      const cleanText = cleanPdfText(textItems);
       const wordCount = cleanText ? cleanText.split(/\s+/).filter(Boolean).length : 0;
 
       pages.push({

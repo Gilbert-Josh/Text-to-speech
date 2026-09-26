@@ -1,9 +1,16 @@
-const API_URL = "http://127.0.0.1:3000/api/tts";
-const HEALTH_URL = "http://127.0.0.1:3000/api/health";
+const HEALTH_URLS = [
+  "http://127.0.0.1:3000/api/health",
+  "http://localhost:3000/api/health"
+];
+const API_URLS = [
+  "http://127.0.0.1:3000/api/tts",
+  "http://localhost:3000/api/tts"
+];
 const VOICE = "alloy";
 const STYLE = "natural";
 const MAX_CHARS = 3800;
 let activeJob = 0;
+let workingApiUrl = null;
 
 browser.runtime.onInstalled.addListener(() => {
   browser.contextMenus.create({
@@ -45,15 +52,18 @@ browser.commands.onCommand.addListener(async (command, tab) => {
 async function ensureContentScript(tabId) {
   try {
     await browser.tabs.sendMessage(tabId, { type: "ping" });
-    return;
+    return true;
   } catch {}
+
   try {
     await browser.scripting.executeScript({
       target: { tabId },
       files: ["content.js"]
     });
+    return true;
   } catch (error) {
     console.error("Could not inject Text to Speech Studio content script:", error);
+    return false;
   }
 }
 
@@ -118,17 +128,50 @@ function splitText(text) {
   return finalChunks;
 }
 
+async function findStudioApi() {
+  let lastError = null;
+
+  for (const healthUrl of HEALTH_URLS) {
+    try {
+      const response = await fetch(healthUrl, {
+        method: "GET",
+        cache: "no-store"
+      });
+
+      if (response.ok) {
+        const apiUrl = healthUrl.replace("/api/health", "/api/tts");
+        workingApiUrl = apiUrl;
+        return apiUrl;
+      }
+
+      lastError = new Error("Studio returned HTTP " + response.status);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  workingApiUrl = null;
+  throw new Error(
+    "Firefox cannot connect to Text to Speech Studio on localhost:3000. " +
+    "The desktop app is open, so check that Firefox has reloaded the latest extension."
+  );
+}
+
 async function startReading(tabId, text) {
   const jobId = ++activeJob;
   const chunks = splitText(text);
 
-  await sendStatus(tabId, "Preparing " + chunks.length + " audio segment" + (chunks.length === 1 ? "" : "s") + "…");
+  await sendStatus(
+    tabId,
+    "Preparing " + chunks.length + " audio segment" +
+    (chunks.length === 1 ? "" : "s") + "…"
+  );
 
+  let apiUrl;
   try {
-    const health = await fetch(HEALTH_URL);
-    if (!health.ok) throw new Error("Text to Speech Studio is not running.");
-  } catch {
-    await sendStatus(tabId, "Text to Speech Studio is not running. Start the desktop app and try again.");
+    apiUrl = await findStudioApi();
+  } catch (error) {
+    await sendStatus(tabId, error.message || "Could not connect to Text to Speech Studio.");
     return;
   }
 
@@ -138,7 +181,7 @@ async function startReading(tabId, text) {
     if (jobId !== activeJob) return;
 
     try {
-      const response = await fetch(API_URL, {
+      const response = await fetch(apiUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -148,9 +191,18 @@ async function startReading(tabId, text) {
         })
       });
 
-      const data = await response.json();
+      let data;
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error("Text to Speech Studio returned an invalid response.");
+      }
+
       if (!response.ok || data.error || !data.audioBase64) {
-        throw new Error(data.error || "Text to Speech Studio did not return audio.");
+        throw new Error(
+          data.error ||
+          "Text to Speech Studio returned HTTP " + response.status + " without audio."
+        );
       }
 
       if (jobId !== activeJob) return;
@@ -198,7 +250,7 @@ function waitForPlayback(tabId, jobId) {
 
 async function sendStatus(tabId, message) {
   try {
-    await ensureContentScript(tabId);
+    if (!await ensureContentScript(tabId)) return;
     await browser.tabs.sendMessage(tabId, { type: "status", message });
   } catch {}
 }

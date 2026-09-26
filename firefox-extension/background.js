@@ -2,15 +2,10 @@ const HEALTH_URLS = [
   "http://127.0.0.1:3000/api/health",
   "http://localhost:3000/api/health"
 ];
-const API_URLS = [
-  "http://127.0.0.1:3000/api/tts",
-  "http://localhost:3000/api/tts"
-];
-const VOICE = "alloy";
-const STYLE = "natural";
 const MAX_CHARS = 3800;
 let activeJob = 0;
 let workingApiUrl = null;
+let activeTabId = null;
 
 browser.runtime.onInstalled.addListener(() => {
   browser.contextMenus.create({
@@ -25,28 +20,54 @@ browser.runtime.onInstalled.addListener(() => {
   });
 });
 
+browser.runtime.onMessage.addListener(async (message) => {
+  if (message?.type === "start-reading" && message.tabId) {
+    const text = await getPageText(message.tabId, !!message.selectionOnly);
+    if (text) {
+      startReading(message.tabId, text, {
+        voice: message.voice || "alloy",
+        style: message.style || "natural"
+      });
+    }
+    return;
+  }
+
+  if (message?.type === "stop-reading") {
+    activeJob++;
+    if (message.tabId) {
+      try {
+        await browser.tabs.sendMessage(message.tabId, { type: "stop-audio" });
+      } catch {}
+    }
+  }
+});
+
 browser.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab?.id) return;
   await ensureContentScript(tab.id);
   if (info.menuItemId === "tts-selection") {
     const text = (info.selectionText || "").trim();
-    if (text) await startReading(tab.id, text);
+    if (text) {
+      const settings = await browser.storage.local.get({ voice: "alloy", style: "natural" });
+      await startReading(tab.id, text, settings);
+    }
   } else if (info.menuItemId === "tts-page") {
-    await readCurrentPage(tab.id);
+    const text = await getPageText(tab.id, false);
+    if (text) {
+      const settings = await browser.storage.local.get({ voice: "alloy", style: "natural" });
+      await startReading(tab.id, text, settings);
+    }
   }
-});
-
-browser.action.onClicked.addListener(async (tab) => {
-  if (!tab?.id) return;
-  await ensureContentScript(tab.id);
-  await readCurrentPage(tab.id);
 });
 
 browser.commands.onCommand.addListener(async (command, tab) => {
   if (command !== "read-selection" || !tab?.id) return;
   await ensureContentScript(tab.id);
   const text = await getPageText(tab.id, true);
-  if (text) await startReading(tab.id, text);
+  if (text) {
+    const settings = await browser.storage.local.get({ voice: "alloy", style: "natural" });
+    await startReading(tab.id, text, settings);
+  }
 });
 
 async function ensureContentScript(tabId) {
@@ -65,15 +86,6 @@ async function ensureContentScript(tabId) {
     console.error("Could not inject Text to Speech Studio content script:", error);
     return false;
   }
-}
-
-async function readCurrentPage(tabId) {
-  const text = await getPageText(tabId, false);
-  if (!text) {
-    await sendStatus(tabId, "No readable text found on this page.");
-    return;
-  }
-  await startReading(tabId, text);
 }
 
 async function getPageText(tabId, selectionOnly) {
@@ -108,15 +120,14 @@ function splitText(text) {
   for (const sentence of sentences) {
     const part = sentence.trim();
     if (!part) continue;
-    if (!current) {
-      current = part;
-    } else if ((current + " " + part).length <= MAX_CHARS) {
-      current += " " + part;
-    } else {
+    if (!current) current = part;
+    else if ((current + " " + part).length <= MAX_CHARS) current += " " + part;
+    else {
       chunks.push(current);
       current = part;
     }
   }
+
   if (current) chunks.push(current);
 
   const finalChunks = [];
@@ -129,38 +140,29 @@ function splitText(text) {
 }
 
 async function findStudioApi() {
-  let lastError = null;
-
   for (const healthUrl of HEALTH_URLS) {
     try {
-      const response = await fetch(healthUrl, {
-        method: "GET",
-        cache: "no-store"
-      });
-
+      const response = await fetch(healthUrl, { method: "GET", cache: "no-store" });
       if (response.ok) {
-        const apiUrl = healthUrl.replace("/api/health", "/api/tts");
-        workingApiUrl = apiUrl;
-        return apiUrl;
+        workingApiUrl = healthUrl.replace("/api/health", "/api/tts");
+        return workingApiUrl;
       }
-
-      lastError = new Error("Studio returned HTTP " + response.status);
-    } catch (error) {
-      lastError = error;
-    }
+    } catch {}
   }
 
   workingApiUrl = null;
   throw new Error(
     "Firefox cannot connect to Text to Speech Studio on localhost:3000. " +
-    "The desktop app is open, so check that Firefox has reloaded the latest extension."
+    "Make sure the desktop app is running and reload the extension."
   );
 }
 
-async function startReading(tabId, text) {
+async function startReading(tabId, text, settings) {
   const jobId = ++activeJob;
-  const chunks = splitText(text);
+  activeTabId = tabId;
+  await ensureContentScript(tabId);
 
+  const chunks = splitText(text);
   await sendStatus(
     tabId,
     "Preparing " + chunks.length + " audio segment" +
@@ -186,18 +188,12 @@ async function startReading(tabId, text) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: chunks[i],
-          voice: VOICE,
-          speakingStyle: STYLE
+          voice: settings.voice || "alloy",
+          speakingStyle: settings.style || "natural"
         })
       });
 
-      let data;
-      try {
-        data = await response.json();
-      } catch {
-        throw new Error("Text to Speech Studio returned an invalid response.");
-      }
-
+      const data = await response.json();
       if (!response.ok || data.error || !data.audioBase64) {
         throw new Error(
           data.error ||
@@ -212,7 +208,8 @@ async function startReading(tabId, text) {
         audioBase64: data.audioBase64,
         mimeType: data.mimeType || "audio/wav",
         position: i + 1,
-        total: chunks.length
+        total: chunks.length,
+        highlightText: chunks[i]
       });
 
       await waitForPlayback(tabId, jobId);
@@ -223,14 +220,21 @@ async function startReading(tabId, text) {
     }
   }
 
-  if (jobId === activeJob) await sendStatus(tabId, "Finished.");
+  if (jobId === activeJob) {
+    await sendStatus(tabId, "Finished.");
+    activeTabId = null;
+  }
 }
 
 function waitForPlayback(tabId, jobId) {
   return new Promise((resolve) => {
     const listener = (message, sender) => {
       if (sender.tab?.id !== tabId) return;
-      if (message?.type === "audio-finished" || message?.type === "audio-stopped") {
+      if (
+        message?.type === "audio-finished" ||
+        message?.type === "audio-stopped" ||
+        message?.type === "audio-skipped"
+      ) {
         browser.runtime.onMessage.removeListener(listener);
         resolve();
       }
